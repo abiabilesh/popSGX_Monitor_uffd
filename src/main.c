@@ -1,71 +1,103 @@
-#define _POSIX_C_SOURCE 200112L
-
-/* C standard library */
-#include <errno.h>		// errno
-#include <stdio.h>		// pid_t
-#include <stddef.h>
-#include <stdlib.h>		// EXIT_FAILURE
-#include <string.h>
-
-/* POSIX */
+#include <stdio.h>
 #include <unistd.h>
-#include <signal.h>		// SIGTRAP
-#include <sys/user.h>	// struct user_regs_struct
-#include <sys/wait.h>
-#include <time.h>		// struct timespec, clock_gettime()
-
-/* Linux */
-#include <syscall.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <pthread.h>
+#include <errno.h>
+#include <poll.h>
+#include <getopt.h>
 #include <sys/ptrace.h>
+#include <sys/wait.h>
+#include <sys/syscall.h>
+#include <linux/userfaultfd.h>  /* Definition of UFFD* constants */
+#include <sys/ioctl.h>
 
-#include <linux/ptrace.h>
-#include <sys/reg.h>	// ORIG_RAX
+#include "log.h"
+#include "compel_handler.h"
+#include "dsm_userspace.h"
 
-#include "ptrace.h"
-#include "log.h"		// log printing
+void print_usage(void){
+    log_info("Usage: ./uffd -v [filename]");
+    exit(EXIT_FAILURE);
+}
 
-/* Time measuring. */
-struct timespec tstart={0,0}, tend={0,0};
+int fork_child(char *victim){
+    int pid = fork();
+    switch (pid)
+    {
+        case -1:
+            log_error("%s. pid -1", strerror(errno));
+        case 0:
+            execl(victim, victim, NULL);
+            exit(EXIT_FAILURE);
+    }
 
-/**
- * Main function for the simple ptrace monitor
- * Use: ./monitor <executable> <args>
- * */
-int main(int argc, char **argv)
-{
-	if (argc <= 1)
-	    log_error("too few arguments: %d", argc);
+    return pid;
+}
 
-	clock_gettime(CLOCK_MONOTONIC, &tstart);
-	pid_t pid = fork();
-	switch (pid) {
-		case -1: /* error */
-			log_error("%s. pid -1", strerror(errno));
-		case 0:  /* child, executing the tracee */
-			ptrace(PTRACE_TRACEME, 0, 0, 0);
-			execvp(argv[1], argv + 1);
-			log_error("%s. child", strerror(errno));
-	}
 
-	waitpid(pid, 0, 0);	// sync with PTRACE_TRACEME
-	ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_EXITKILL);
+int steal_fd_using_compel(int pid, int cmd){
+    int fd;
+    if(!(setup_compel(pid)));
+        if(!steal_fd(cmd, &fd));
+            if(!cleanup_compel());
+                return fd;
+    return -1;
+}
 
-	int terminate = 0;
-	int status = 0;
-	while (!terminate) {
-		//uint64_t pc = get_pc(pid);
-		//log_info("pc: 0x%lx", pc);
-		//status = 0;
-		ptrace(PTRACE_CONT, pid, 0L, 0L);
-		if (waitpid(pid, &status, 0) == -1) {
-			log_info("status %d", status);
-			if (WIFEXITED(status))
-				log_info("Child terminated normally.");
-			break;
-		}
-	}
-	clock_gettime(CLOCK_MONOTONIC, &tend);
-	log_info("Finish main loop! %.5f seconds.", ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
-           ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
-	return 0;
+int main(int argc, char *argv[]){
+    int opt, ret, child_pid;
+    char *victim;
+    dsm_args d_args;
+
+    const char *short_opt = "v:r:p:t:";
+    struct option   long_opt[] =
+    {
+        {     "victim", required_argument, NULL, 'v'},
+        {  "remote_ip", required_argument, NULL, 'r'},
+        {  "host_port", required_argument, NULL, 'p'},
+        {"remote_port", required_argument, NULL, 't'},
+        {         NULL,                 0, NULL,  0 }
+    };
+
+    while((opt = getopt_long(argc, argv, short_opt, long_opt, NULL)) != -1){
+        switch (opt)
+        {
+        case 'v':
+            victim = strdup(optarg);
+            break;
+        
+        case 'r':
+            d_args.remote_ip = strdup(optarg);
+            break;
+
+        case 'p':
+            d_args.host_port = atoi(optarg);
+            break;
+
+        case 't':
+            d_args.remote_port = atoi(optarg);
+            break;
+
+        case '?':
+        default:
+            print_usage();
+            break;
+        }
+    }
+    
+    child_pid = fork_child(victim);
+    d_args.uffd = steal_fd_using_compel(child_pid, PARASITE_CMD_GET_STDUFLT_FD);
+    if(d_args.uffd == -1){
+        log_error("Error in Compel");
+        exit(EXIT_FAILURE);
+    }
+
+    d_args.flt_reg.fault_addr = 0x10000;
+    d_args.flt_reg.num_pages  = 25;
+
+    dsm_main(d_args);
+    return 0;
 }
