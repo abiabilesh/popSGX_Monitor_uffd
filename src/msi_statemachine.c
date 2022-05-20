@@ -95,7 +95,7 @@ void msi_handle_page_request(int sk, struct msi_message* in_msg)
 
 	/*If I'm invalid too, then I'll give you an empty page */
 	if (page_to_transition->tag == INVALID) {
-		memset(msg_out.payload.page_data, 0, sysconf(_SC_PAGE_SIZE));
+		memset(msg_out.payload.page_data, 'A', sysconf(_SC_PAGE_SIZE));
 	}
 	else {
 		/* Else I'll give you my local memory storage, won't trigger

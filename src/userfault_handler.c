@@ -36,8 +36,8 @@ fault_handler_thread(void *arg)
 	struct uffdio_copy uffdio_copy;
 	ssize_t nread;
 
-	uffd = handler_arg->uffd;
-
+	uffd = (long)handler_arg->uffd;
+	printf("UFFD descriptor is %ld\n", uffd);
 
 	for (;;) {
 		struct pollfd pollfd;
@@ -65,10 +65,12 @@ fault_handler_thread(void *arg)
 		printf("    UFFD_EVENT_PAGEFAULT event: ");
 		printf("flags = %llx; ", msg.arg.pagefault.flags);
 		printf("address = %llx\n", msg.arg.pagefault.address);
+		
 		//fault_cnt++;
 		msi_request_page(handler_arg->sk, page,
 				 (void*)msg.arg.pagefault.address,
 				 msg.arg.pagefault.flags);
+        
 
 		uffdio_copy.src = (unsigned long) page;
 		uffdio_copy.dst = (unsigned long) msg.arg.pagefault.address &
@@ -106,15 +108,17 @@ long setup_userfaultfd_region(void* start_region, void** physical_region, uint64
 	struct userfaultfd_thread_args* args =
 		(struct userfaultfd_thread_args*)malloc(sizeof(struct
 						userfaultfd_thread_args));
+	#if 0
 	*physical_region = mmap(NULL, length, PROT_READ | PROT_WRITE,
 		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (*physical_region == MAP_FAILED)
 		errExit("mmap");
 	memset(*physical_region, 0, length);
+	#endif
 	args->sk = sk;
 	args->physical_address = (uint64_t)*physical_region;
 	args->uffd = uffd;
-
+	
 	#if 0
 	uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK);
 

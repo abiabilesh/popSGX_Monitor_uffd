@@ -56,19 +56,22 @@ static void address_msi_pages(uint64_t mmap_addr, uint64_t phy_addr)
 
 static void handle_write_command(int sk)
 {
-	char write_buffer[WRITE_BUF_LEN] = {0};
+	//char write_buffer[WRITE_BUF_LEN] = {0};
+	char write_buffer[WRITE_BUF_LEN] = "Abilesh";
 	unsigned long page_num;
 	struct msi_message msg;
 	int write_ret;
 
+	#if 0
 	printf("\nWhat would you like to write?:\n");
 	if (!fgets(write_buffer, WRITE_BUF_LEN, stdin))
 		errExit("fgets error");
+	#endif
 
 	page_num = 0;
 	if (page_num < g_pages_mapped) {
-		//printf("\nCopying %s to address %p\n", write_buffer,
-		//       pages[page_num].start_address);
+		printf("\nCopying %s to address %p\n", write_buffer,
+		       pages[page_num].start_address);
 		memcpy(pages[page_num].start_address, write_buffer,
 		       strlen(write_buffer));
 		pages[page_num].tag = MODIFIED;
@@ -216,32 +219,27 @@ int dsm_main(dsm_args args){
 	/* User fault thread related */
 	struct mmap_args shared_mapping;
 	pthread_t userfaultfd_thread;
-	void* physical_address;
+	char* physical_address;
 	int exit_write_ret;
+	bool is_server = 0;
 
 	/* Message */
 	struct msi_message msg;
 
 	initialize_msi_pages();
 
-	int is_server = 0;
-
 	/* Create client first and try to connect. If other server doesn't
 	 * exist, then we are the first node. Else, we are the second node. */
 	socket_fd = try_connect_client(args.remote_port, args.remote_ip, &bus_args,
 				       &shared_mapping);
-	if (socket_fd > 0){
-		/* We have successfully connected and have a socket fd*/
-		mmap(shared_mapping.memory_address, shared_mapping.len,
-		     PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS |
-		     MAP_FIXED, -1, 0);
-	}else{
+	if (socket_fd <= 0){
 	/* There is no server to connect to so we set up ourselves as the server*/
 		socket_fd = setup_server(args.host_port, &bus_args,
 					 &shared_mapping, args.flt_reg);
 		is_server = 1;
 	}
 
+#if 1
 	bus_thread_ret = pthread_create(&bus_thread, NULL,
 					     bus_thread_handler,
 					     (void *) &bus_args);
@@ -249,14 +247,23 @@ int dsm_main(dsm_args args){
 		errno = bus_thread_ret;
 		errExit("pthread_create");
 	}
+#endif
 
-	setup_userfaultfd_region(shared_mapping.memory_address,
-				&physical_address,
-				shared_mapping.len, &userfaultfd_thread,
-				&fault_handler_thread, socket_fd, args.uffd);
-	
-	address_msi_pages((uint64_t)shared_mapping.memory_address,
+	physical_address = mmap(NULL, shared_mapping.len, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (*physical_address == MAP_FAILED)
+		errExit("mmap");
+	memset(physical_address, 0, shared_mapping.len);
+
+        address_msi_pages((uint64_t)shared_mapping.memory_address,
 			(uint64_t)physical_address);
+
+	if(is_server)
+	setup_userfaultfd_region(shared_mapping.memory_address,
+					&physical_address,
+					shared_mapping.len, &userfaultfd_thread,
+					&fault_handler_thread, socket_fd, args.uffd);
+	
 	
 	for(;;);
 

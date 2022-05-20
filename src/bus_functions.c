@@ -61,15 +61,15 @@ void* bus_thread_handler(void* arg)
 				close(bus_args->fd);
 				return NULL;
 			case INVALID_STATE_READ:
-				//printf("INVALID_STATE_READ_MSG_RECEIVED\n");
+				printf("INVALID_STATE_READ_MSG_RECEIVED\n");
 				msi_handle_page_request(bus_args->fd, &msg);
 			break;
 			case INVALIDATE:
-				//printf("INVALIDATE_RECEIVED\n");
+				printf("INVALIDATE_RECEIVED\n");
 				msi_handle_page_invalidate(bus_args->fd, &msg);
 			break;
 			case PAGE_REPLY:
-				//printf("PAGE_REPLY_RECEIVED\n");
+				printf("PAGE_REPLY_RECEIVED\n");
 			//if (*(msg.payload.page_data) != (int)0){
 				//printf("payload page data: %s\n",
 			//	       msg.payload.page_data);
@@ -97,18 +97,17 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 {
 	/* Socket related variables */
 	int sk, ret;
-	int ask;
+	int ask = 0;
 	int len;
 	struct sockaddr_in addr;
 	/* mmap related */
-//	char command[INPUT_CMD_LEN];
+    //char command[INPUT_CMD_LEN];
 	int page_size;
 	void* mmap_ptr;
 	int write_ret;
 	unsigned long num_pages;
-
 	struct msi_message msg;
-
+#if 1
 	sk = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (sk < 0) {
 		errExit("Socket Creation");
@@ -129,12 +128,14 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 	}
 
 	printf("Waiting for connections\n");
-
+#if 1
 	ask = accept(sk, NULL, NULL);
 	if (ask < 0) {
 		errExit("Server accept failed");
 	}
 	printf("Connection established with client\n");
+#endif
+#endif
 
 #if 0
 	/* Prompt User for mmap memory */
@@ -159,7 +160,6 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 
 #endif
 
-
 	page_size = sysconf(_SC_PAGE_SIZE);
 	mmap_ptr = flt_reg.fault_addr;
 	num_pages = flt_reg.num_pages;
@@ -169,7 +169,7 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 	       ,mmap_ptr, len);
 
 	set_pages_in_use(num_pages);
-
+#if 1
 	/* Populate Message fields before sending */
 	msg.message_type = CONNECTION_ESTABLISHED;
 	msg.payload.memory_pair.address = (uint64_t)mmap_ptr;
@@ -178,7 +178,7 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 	if (write_ret <= 0) {
 		errExit("Server initial write error");
 	}
-
+#endif
 	/* Output mmap details so it can be handled in the userfaultfd */
 	mmap_output->memory_address = mmap_ptr;
 	mmap_output->len = (uint64_t)len;
@@ -210,6 +210,7 @@ int try_connect_client(int port, char* ip_string, struct
 	}
 
 	printf("Connecting to %s:%d\n", ip_string, port);
+
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	err = inet_aton(ip_string, &addr.sin_addr);
@@ -236,6 +237,7 @@ int try_connect_client(int port, char* ip_string, struct
 	}
 	set_pages_in_use(msg.payload.memory_pair.size/sysconf(_SC_PAGE_SIZE));
 	/* Output mmap details so it can be handled in the userfaultfd */
+
 	mmap_output->memory_address = (void*)msg.payload.memory_pair.address;
 	mmap_output->len = msg.payload.memory_pair.size;
 	/* Output the socket fd */

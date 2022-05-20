@@ -21,7 +21,6 @@ typedef struct compel_handler
 
 int setup_compel(int victim_pid);
 int cleanup_compel(void);
-
 int steal_fd(int cmd, int *stolen_fd);
 
 #endif

@@ -18,12 +18,14 @@ int main(int argc, char **argv)
 //        signal(SIGINT,sig_handler);
 	hello += 0xf;
 	do {
-                //printf("Hello world!!\n");
+                printf("Victim about to access a new page !!!!!!!!!!!!!!\n");
                 i++;
                 //fprintf(stdout,"Hello world!!\n");
 		fprintf(stdout,"%c\n", *hello);
 		hello += 4096;
-	} while (i < 26);
+                if(i%26 == 0)
+                    hello += 0xf;
+	} while (i < 10000);
 
 	return 0;
 }

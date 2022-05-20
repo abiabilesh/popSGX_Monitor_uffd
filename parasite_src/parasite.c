@@ -22,13 +22,15 @@
 #define PARASITE_CMD_GET_STDERR_FD PARASITE_USER_CMDS + 2
 #define PARASITE_CMD_GET_STDUFLT_FD PARASITE_USER_CMDS + 3
 
+long ufFd = -1;
+
 int send_uffd(){
     int page_size;
     u_int64_t noPages;
     u_int64_t memorySize;
     char* addr;
     int ret;
-	  long ufFd = -1;
+    long ufFd = -1;
 
     //userfaultfd stuffs
     struct uffdio_api ufFd_api;
@@ -51,7 +53,7 @@ int send_uffd(){
 		return -1;
     }
     
-	  addr = sys_mmap(0x10000, memorySize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
+    addr = sys_mmap(0x10000, memorySize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
     if(addr == MAP_FAILED){
 		  return -1;
     }
@@ -87,6 +89,14 @@ void parasite_cleanup(void)
 
 int parasite_daemon_cmd(int cmd, void *args)
 {
+    int page_size;
+    u_int64_t noPages;
+    u_int64_t memorySize;
+    char* addr;
+    int ret;
+    //userfaultfd stuffs
+    struct uffdio_api ufFd_api;
+    struct uffdio_register ufFd_register;
 
 	switch (cmd)
 	{
