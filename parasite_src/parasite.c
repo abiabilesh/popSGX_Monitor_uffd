@@ -22,9 +22,7 @@
 #define PARASITE_CMD_GET_STDERR_FD PARASITE_USER_CMDS + 2
 #define PARASITE_CMD_GET_STDUFLT_FD PARASITE_USER_CMDS + 3
 
-long ufFd = -1;
-
-int send_uffd(){
+static int send_uffd(){
     int page_size;
     u_int64_t noPages;
     u_int64_t memorySize;
@@ -40,7 +38,6 @@ int send_uffd(){
     noPages = 26;
     memorySize = noPages * page_size;
 
-    //ufFd = syscall(__NR_userfaultfd, O_CLOEXEC| O_NONBLOCK);
     ufFd = sys_userfaultfd(O_CLOEXEC| O_NONBLOCK);
     if(ufFd == -1){
 	    return -1;
@@ -60,8 +57,15 @@ int send_uffd(){
 
     ufFd_register.range.start = (unsigned long long)addr;
     ufFd_register.range.len   = memorySize;
-    ufFd_register.mode = UFFDIO_REGISTER_MODE_MISSING;
+    ufFd_register.mode = UFFDIO_REGISTER_MODE_MISSING | UFFDIO_REGISTER_MODE_WP;
     if(sys_ioctl(ufFd, UFFDIO_REGISTER, &ufFd_register) == -1){
+		  return -1;
+    }
+
+    ufFd_register.range.start = (unsigned long long)addr;
+    ufFd_register.range.len   = memorySize;
+    ufFd_register.mode = UFFDIO_WRITEPROTECT_MODE_WP;
+    if(sys_ioctl(ufFd, UFFDIO_WRITEPROTECT, &ufFd_register) == -1){
 		  return -1;
     }
 

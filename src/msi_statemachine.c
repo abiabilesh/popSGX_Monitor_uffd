@@ -70,7 +70,6 @@ void msi_request_page(int sk, char* page, void* fault_addr, unsigned int rw)
 	page_to_transition->tag = SHARED;
 	goto out_good;
 
-
 out_good:
 	pthread_mutex_unlock(&bus_lock);
 	pthread_mutex_unlock(&page_to_transition->mutex);
@@ -95,7 +94,7 @@ void msi_handle_page_request(int sk, struct msi_message* in_msg)
 
 	/*If I'm invalid too, then I'll give you an empty page */
 	if (page_to_transition->tag == INVALID) {
-		memset(msg_out.payload.page_data, 'A', sysconf(_SC_PAGE_SIZE));
+		memset(msg_out.payload.page_data, '0', sysconf(_SC_PAGE_SIZE));
 	}
 	else {
 		/* Else I'll give you my local memory storage, won't trigger
@@ -137,8 +136,8 @@ void msi_handle_page_invalidate (int sk, struct msi_message* in_msg)
 	if (madvise(page_to_transition->start_address, sysconf(_SC_PAGE_SIZE), MADV_DONTNEED)) {
 		errExit("fail to madvise");
 	}
-				//printf("[%p]TO_INVALID\n",
-				 //      page_to_transition->start_address);
+				printf("[%p]TO_INVALID\n",
+				       page_to_transition->start_address);
 	msg.message_type = INVALIDATE_ACK;
 	/* Ignore payload for now until we add error handling */
 	write_ret = write(sk, &msg, sizeof(msg));
@@ -162,4 +161,34 @@ void msi_handle_page_reply(int sk, struct msi_message* in_msg)
 void msi_handle_invalidate_ack(int sk, struct msi_message* in_msg)
 {
 	/* Wait for reply, ack */
+}
+
+void handle_write_command(int sk, void *addr, void* data, size_t data_size)
+{
+	char write_buffer[WRITE_BUF_LEN] = {0};
+	unsigned long page_num;
+	struct msi_message msg;
+	int write_ret;
+
+	struct msi_page* page_to_transition = find_msi_page(addr);
+	if (!page_to_transition){
+		errExit("Unable to find page\n");
+	}
+
+	page_num = 0;
+	//if (page_num < g_pages_mapped) {
+	if (page_to_transition) {
+		printf("\nCopying %p to address %p\n", data, page_to_transition->start_address);
+		memcpy(page_to_transition->start_address, data, data_size);
+		#if 1
+		page_to_transition->tag = MODIFIED;
+		msg.message_type = INVALIDATE;
+		msg.payload.invalidate_page.address =
+			(uint64_t)page_to_transition->start_address;
+		write_ret = write(sk, &msg, sizeof(msg));
+		if (write_ret <= 0) {
+			errExit("Bad write");
+		}
+		#endif
+	}
 }

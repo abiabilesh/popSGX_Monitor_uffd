@@ -16,6 +16,7 @@ int main(int argc, char **argv)
 {
 	int i = 0;// aux;
 //        signal(SIGINT,sig_handler);
+	sleep(10);
 	hello += 0xf;
 	do {
                 printf("Victim about to access a new page !!!!!!!!!!!!!!\n");

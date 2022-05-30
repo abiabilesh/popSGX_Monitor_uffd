@@ -12,15 +12,19 @@
 #define PARASITE_CMD_GET_STDERR_FD PARASITE_USER_CMDS + 2
 #define PARASITE_CMD_GET_STDUFLT_FD PARASITE_USER_CMDS + 3
 
-typedef struct compel_handler
+typedef struct compel_handle
 {
-    int status;
-    int victim_pid;
     struct infect_ctx *ctl;
+    int status;
+    pid_t victim_pid;
+    bool is_intialized;
 }compel_handle;
 
-int setup_compel(int victim_pid);
-int cleanup_compel(void);
-int steal_fd(int cmd, int *stolen_fd);
+//Compel Intializer
+int compel_setup(pid_t pid);
+//Compel Destructor
+int compel_destruct(void);
+//Compel functionalities
+int compel_stealFd(int cmd, int *stolen_fd);
 
 #endif

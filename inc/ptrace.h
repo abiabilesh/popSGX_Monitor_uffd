@@ -1,6 +1,5 @@
-
-#ifndef _PTRACE_H
-#define _PTRACE_H
+#ifndef _PTRACE_HEADER_H_
+#define _PTRACE_HEADER_H_
 
 #include <sys/ptrace.h>		// ptrace
 #include <sys/wait.h>		// waitpid

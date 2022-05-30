@@ -3,16 +3,15 @@
 
 #include "types.h"
 
-#define BUFSIZE 2000
-
 typedef struct dsm_args{
     int host_port;
-    char remote_ip[BUFSIZE + 1];
+    char *remote_ip;
     int remote_port;
     int uffd;
     fault_region flt_reg;
+    pid_t victim_pid;
 }dsm_args;
 
 int dsm_main(dsm_args args);
-static void address_msi_pages(uint64_t mmap_addr, uint64_t phy_addr);
+static void address_msi_pages(uint64_t mmap_addr);
 #endif

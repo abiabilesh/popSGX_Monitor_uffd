@@ -1,78 +1,73 @@
-#if 1
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
-#include <sys/wait.h>
-#include<fcntl.h>
-#include <stdio.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/syscall.h>
-#include <sys/mman.h>
-#include <pthread.h>
-#include <errno.h>
-#include <poll.h>
-#include <string.h>
-#include <linux/userfaultfd.h>  /* Definition of UFFD* constants */
-#include <sys/ioctl.h>
 
 #include "compel_handler.h"
+#include "log.h"
 
-#define errExit(msg) do{ perror(msg); exit(EXIT_FAILURE);}while(0)
+static compel_handle cmpl_hdl = {0};
 
-int state;
-struct infect_ctx *ctl;
-int child_pid;
+static void intialize_compel_handle(void);
 
-int steal_fd(int cmd, int *stolen_fd){
-    printf("Infecting\n");
-    
-    if (compel_infect(ctl, 1, sizeof(int))){
-        fprintf(stderr,"Can't infect victim\n");
-        return -1;
-    }
-
-    printf("Stealing fd\n");
-    if (compel_rpc_call(cmd, ctl)){
-        fprintf(stderr,"Can't run cmd\n");
-        return -1;
-    }
-
-    if (compel_util_recv_fd(ctl, stolen_fd)){
-        fprintf(stderr,"Can't recv fd\n");
-        return -1;
-    }
-
-    if (compel_rpc_sync(cmd, ctl)){
-        fprintf(stderr,"Con't finalize cmd\n");
-        return -1;
-    }
-
-    printf("Stole %d fd\n", *stolen_fd);
-    return 0;
+static void intialize_compel_handle(void){
+    cmpl_hdl.ctl = NULL;
+    cmpl_hdl.status = -1;
+    cmpl_hdl.victim_pid = -1;
+    cmpl_hdl.is_intialized = false;
 }
 
-int setup_compel(int pid){
-    child_pid = pid;
-    int *stolen_fd;
-    struct infect_ctx *ictx;
-    printf("Stopping task\n");
-    state = compel_stop_task(pid);
-    if (state < 0){
-         fprintf(stderr,"Can't stop task\n");
-         return -1;
-    }
- 
-    printf("Preparing parasite ctl\n");
-    ctl = compel_prepare(pid);
-    if (!ctl){
-         fprintf(stderr,"Can't prepare for infection\n");
-         return -1;
+int compel_stealFd(int cmd, int *stolen_fd){
+    if(!cmpl_hdl.is_intialized){
+        log_error("Compel is not intialized");
+        goto fail_compel_stealFd;
     }
 
-    printf("Configuring contexts\n");
+    log_debug("Stealing the %d fd from the victim pid %d", cmd, cmpl_hdl.victim_pid);
+    if(compel_rpc_call(cmd, cmpl_hdl.ctl)){
+        log_error("Cannot run the command %d", cmd);
+        goto fail_compel_stealFd;
+    }
+
+    if(compel_util_recv_fd(cmpl_hdl.ctl, stolen_fd)){
+        log_error("Could not receive the %d fd", cmd);
+        goto fail_compel_stealFd;
+    }
+
+    if(compel_rpc_sync(cmd, cmpl_hdl.ctl)){
+        log_error("Could not finalize the command %d", cmd);
+        goto fail_compel_stealFd;
+    }
+
+    log_debug("Successfully stolen the fd %d", *stolen_fd);
+    return 0;
+
+fail_compel_stealFd:
+    return -1;
+}
+
+int compel_setup(pid_t pid){
+    int state;
+    struct parasite_ctl *ctl;
+    struct infect_ctx *ictx;
+
+    intialize_compel_handle();
+
+    cmpl_hdl.victim_pid = pid;
+    log_debug("Stoping the victim for compel code injection");
+    state = compel_stop_task(pid);
+    if(state < 0){
+        log_error("Could not stop the victim for compel infection");
+        return state;
+    }
+    cmpl_hdl.status = state;
+
+    log_debug("Preparing compel's parasitic context");
+    ctl = compel_prepare(pid);
+    if(!ctl){
+        log_error("Could not create compel context");
+        goto fail_compel_setup;
+    }
+    cmpl_hdl.ctl = ctl;
 
     /*
      * First -- the infection context. Most of the stuff
@@ -80,30 +75,50 @@ int setup_compel(int pid){
      * log descriptor for parasite side, library cannot
      * live w/o it.
      */
-    ictx = compel_infect_ctx(ctl);
+    ictx = compel_infect_ctx(cmpl_hdl.ctl);
     ictx->log_fd = STDERR_FILENO;
+    
+    log_debug("Preparing the parasite code header for injection");
+    parasite_setup_c_header(cmpl_hdl.ctl);
 
-    parasite_setup_c_header(ctl);
- 
-    return 0;
-
-}
-
-int cleanup_compel(void){
-    int pid = child_pid;
-    printf("Curing\n");
-   
-    if (compel_cure(ctl)){
-          fprintf(stderr, "Can't cure victim");
-          return -1;
+    log_debug("Infecting the victim through code injection");
+    if(compel_infect(cmpl_hdl.ctl, 1, sizeof(int))){
+        log_error("Could not infect the victim");
+        goto fail_compel_setup;
     }
 
-    if (compel_resume_task(pid, state, state)){
-          fprintf(stderr, "Can't unseize task");
-          return -1;
+    cmpl_hdl.is_intialized = true;
+
+    return 0;
+
+fail_compel_setup:
+    return -1;
+}
+
+int compel_destruct(void){
+    
+    if(!cmpl_hdl.is_intialized){
+        log_error("Compel is not intialized");
+        goto fail_compel_destruct;
     }
 
-    printf("Done\n");
+    int pid = cmpl_hdl.victim_pid;
+    int state = cmpl_hdl.status;
+
+    log_debug("Curing the victim");
+    if(compel_cure(cmpl_hdl.ctl)){
+        log_error("Could not cure the victim");
+        goto fail_compel_destruct;
+    }
+
+    log_debug("Resuming the victim for normal execution");
+    if(compel_resume_task(pid, state, state)){
+        log_error("Could not unseize the victim task");
+        goto fail_compel_destruct;
+    }
+
     return 0;
+
+fail_compel_destruct:
+    return -1;
 }
-#endif

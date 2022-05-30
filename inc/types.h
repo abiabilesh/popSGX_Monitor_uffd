@@ -46,8 +46,8 @@ struct mmap_args
 struct userfaultfd_thread_args
 {
 	int sk;
-	uint64_t physical_address;
 	long uffd;
+	pid_t victim_pid;
 };
 
 
