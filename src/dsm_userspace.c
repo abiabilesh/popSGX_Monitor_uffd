@@ -33,6 +33,9 @@ char* msi_strings[NUM_TAGS] = {"INVALID", "MODIFIED", "SHARED"};
 struct msi_page pages[MAX_PAGES];
 unsigned long g_pages_mapped;
 
+/*Victim process id */
+pid_t victim_pid;
+
 static void initialize_msi_pages()
 {
 	int i;
@@ -70,6 +73,7 @@ int dsm_main(dsm_args args){
 	/* Message */
 	struct msi_message msg;
 
+	victim_pid = args.victim_pid;
 	initialize_msi_pages();
 
 	/* Create client first and try to connect. If other server doesn't

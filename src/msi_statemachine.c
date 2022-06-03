@@ -3,7 +3,6 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/types.h>
-#include "msi_statemachine.h"
 #include "messages.h"
 #include "types.h"
 #include "stdint.h"
@@ -11,9 +10,14 @@
 #include <string.h>
 #include <pthread.h>
 
+#include "msi_statemachine.h"
+#include "compel_handler.h"
+
+/* Global values coming from dsm_userspace.c */
 extern struct msi_page pages[];
 extern unsigned long g_pages_mapped;
 extern pthread_mutex_t bus_lock;
+extern pid_t victim_pid;
 
 int waiting_for_page_reply = 0;
 pthread_cond_t page_reply_cond  = PTHREAD_COND_INITIALIZER;
@@ -136,8 +140,11 @@ void msi_handle_page_invalidate (int sk, struct msi_message* in_msg)
 	if (madvise(page_to_transition->start_address, sysconf(_SC_PAGE_SIZE), MADV_DONTNEED)) {
 		errExit("fail to madvise");
 	}
-				printf("[%p]TO_INVALID\n",
-				       page_to_transition->start_address);
+	write_ret = compel_victim_madvise(victim_pid, PARASITE_CMD_SET_MADVISE_NO_NEED, page_to_transition->start_address);
+    if(write_ret){
+        errExit("Setting madvise on victim failed");
+	}
+	printf("[%p]TO_INVALID\n", page_to_transition->start_address);
 	msg.message_type = INVALIDATE_ACK;
 	/* Ignore payload for now until we add error handling */
 	write_ret = write(sk, &msg, sizeof(msg));

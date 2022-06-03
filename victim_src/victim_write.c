@@ -34,10 +34,10 @@ int main(int argc, char **argv)
         fprintf(stdout,"address %p value %c\n", hello, *(hello+0xf));
         hello += 4096;
        
-        if(i % 10 == 0){
+        if(i % 26 == 0){
             hello = 0x10000;
 	      }
-	} while (i < 20);
+	} while (i < 52);
 
   while(1);
 	return 0;

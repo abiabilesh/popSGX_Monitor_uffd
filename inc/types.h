@@ -26,7 +26,6 @@ struct msi_page
 	enum msi_tag tag;
 	pthread_mutex_t mutex;
 	void* start_address;
-	void* physical_address;
 	bool in_use;
 };
 

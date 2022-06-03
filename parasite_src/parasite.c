@@ -17,17 +17,27 @@
 #include <compel/plugins/std.h>
 
 
-#define PARASITE_CMD_GET_STDIN_FD PARASITE_USER_CMDS
-#define PARASITE_CMD_GET_STDOUT_FD PARASITE_USER_CMDS + 1
-#define PARASITE_CMD_GET_STDERR_FD PARASITE_USER_CMDS + 2
-#define PARASITE_CMD_GET_STDUFLT_FD PARASITE_USER_CMDS + 3
+#define PARASITE_CMD_GET_STDIN_FD         PARASITE_USER_CMDS
+#define PARASITE_CMD_GET_STDOUT_FD        PARASITE_USER_CMDS + 1
+#define PARASITE_CMD_GET_STDERR_FD        PARASITE_USER_CMDS + 2
+#define PARASITE_CMD_GET_STDUFLT_FD       PARASITE_USER_CMDS + 3
+#define PARASITE_CMD_SET_MADVISE_NO_NEED  PARASITE_USER_CMDS + 4
+
+static int set_madvise(void *addr, size_t len, int advice_type)
+{
+  int ret;
+  ret = sys_madvise(addr, len, advice_type);
+  if (ret) {
+    return ret;
+  }
+  return 0;
+}
 
 static int send_uffd(){
     int page_size;
     u_int64_t noPages;
     u_int64_t memorySize;
     char* addr;
-    int ret;
     long ufFd = -1;
 
     //userfaultfd stuffs
@@ -76,7 +86,6 @@ static int send_uffd(){
     return 0;
 }
 
-
 /*
  * Stubs for std compel plugin.
  */
@@ -119,6 +128,10 @@ int parasite_daemon_cmd(int cmd, void *args)
 	case PARASITE_CMD_GET_STDUFLT_FD:
 		return (send_uffd());
 		break;
+  
+  case PARASITE_CMD_SET_MADVISE_NO_NEED:
+    return set_madvise((*(uint64_t *)args), 4096, MADV_DONTNEED);
+    break;
 
 	default:
 		break;

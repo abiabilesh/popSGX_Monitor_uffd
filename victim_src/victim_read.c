@@ -25,7 +25,7 @@ int main(int argc, char **argv)
 		fprintf(stdout,"%c\n", *hello);
 		hello += 4096;
                 if(i%26 == 0)
-                    hello += 0xf;
+                    hello = 0x1000f;
 	} while (i < 10000);
 
 	return 0;

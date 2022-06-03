@@ -9,7 +9,6 @@
 #define OPT_MANDATORY_COUNT 6
 extern char* __progname;
 static pid_t execute_victim(char *victim);
-static int steal_victim_uffd(pid_t victim_pid, int *fd);
 
 static void usage(void)
 {
@@ -45,33 +44,6 @@ static pid_t execute_victim(char *victim)
 
     log_debug("Succesfully forked the victim as a child process");
     return pid;
-}
-
-static int steal_victim_uffd(pid_t victim_pid, int *uffd){
-    int ret = -1;
-
-    ret = compel_setup(victim_pid);
-    if(ret){
-        log_error("Compel setup failed");
-        goto fail_steal_uffd;
-    }
-
-    ret = compel_stealFd(PARASITE_CMD_GET_STDUFLT_FD, uffd);
-    if(ret){
-        log_error("Stealing the fd from victim failed");
-        goto fail_steal_uffd;
-    }
-
-    ret = compel_destruct();
-    if(ret){
-        log_error("Compel destruct failed");
-        goto fail_steal_uffd;
-    }
-
-    return 0;
-
-fail_steal_uffd:
-    return ret;
 }
 
 int main(int argc, char *argv[]){
@@ -138,7 +110,7 @@ int main(int argc, char *argv[]){
 
     child_pid = execute_victim(victim);
 
-    ret = steal_victim_uffd(child_pid, &d_args.uffd);
+    ret = compel_victim_stealFd(child_pid, PARASITE_CMD_GET_STDUFLT_FD, &d_args.uffd);
     if(ret){
         log_error("Stealing victim's uffd failed");
         exit(EXIT_FAILURE);
