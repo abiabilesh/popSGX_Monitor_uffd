@@ -141,7 +141,7 @@ void msi_handle_page_invalidate (int sk, struct msi_message* in_msg)
 		errExit("fail to madvise");
 	}
 	write_ret = compel_victim_madvise(victim_pid, PARASITE_CMD_SET_MADVISE_NO_NEED, page_to_transition->start_address);
-    if(write_ret){
+        if(write_ret){
         errExit("Setting madvise on victim failed");
 	}
 	printf("[%p]TO_INVALID\n", page_to_transition->start_address);
