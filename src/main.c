@@ -1,71 +1,124 @@
-#define _POSIX_C_SOURCE 200112L
-
-/* C standard library */
-#include <errno.h>		// errno
-#include <stdio.h>		// pid_t
-#include <stddef.h>
-#include <stdlib.h>		// EXIT_FAILURE
-#include <string.h>
-
-/* POSIX */
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
-#include <signal.h>		// SIGTRAP
-#include <sys/user.h>	// struct user_regs_struct
-#include <sys/wait.h>
-#include <time.h>		// struct timespec, clock_gettime()
+#include <getopt.h>
+#include "log.h"
+#include "dsm_userspace.h"
+#include "compel_handler.h"
 
-/* Linux */
-#include <syscall.h>
-#include <sys/ptrace.h>
+#define OPT_MANDATORY_COUNT 6
+extern char* __progname;
+static pid_t execute_victim(char *victim);
 
-#include <linux/ptrace.h>
-#include <sys/reg.h>	// ORIG_RAX
-
-#include "ptrace.h"
-#include "log.h"		// log printing
-
-/* Time measuring. */
-struct timespec tstart={0,0}, tend={0,0};
-
-/**
- * Main function for the simple ptrace monitor
- * Use: ./monitor <executable> <args>
- * */
-int main(int argc, char **argv)
+static void usage(void)
 {
-	if (argc <= 1)
-	    log_error("too few arguments: %d", argc);
+    log_info("\n"
+             "usage: %s [-v victim | -r remote-node-ip | -p remote-node-port | -t host-port |-m shared_mem | -n no_pages]"
+             "\n"
+             "options:\n"
+             "\t-v victim process to serve page-faults & ditributed-memory-sharing\n"
+             "\t-r remote node's ip-address for dsm\n"
+             "\t-p remote node's port-number for dsm\n"
+             "\t-t host's port-number\n"
+             "\t-m address of the memory region to be shared\n"
+             "\t-n number of pages to be shared\n"
+             "\t-h help"
+             "\n",
+             __progname);
+    exit(EXIT_SUCCESS);
+}
 
-	clock_gettime(CLOCK_MONOTONIC, &tstart);
-	pid_t pid = fork();
-	switch (pid) {
-		case -1: /* error */
-			log_error("%s. pid -1", strerror(errno));
-		case 0:  /* child, executing the tracee */
-			ptrace(PTRACE_TRACEME, 0, 0, 0);
-			execvp(argv[1], argv + 1);
-			log_error("%s. child", strerror(errno));
+static pid_t execute_victim(char *victim)
+{
+    pid_t pid;
+
+    pid = fork();
+    if(pid < 0){
+        log_error("Failed forking the victim with error %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }else if(pid == 0){
+        execl(victim, victim, NULL);
+        //should not execute the below line
+        exit(EXIT_FAILURE);
+    }
+
+    log_debug("Succesfully forked the victim as a child process");
+    return pid;
+}
+
+int main(int argc, char *argv[]){
+    int ret;
+    int opt, opt_counter = 0;
+    dsm_args d_args = {0};
+    char *victim = NULL;
+    pid_t child_pid = -1;
+
+    /*
+     *  Parse the arguments
+     */
+
+    struct option long_opt[] =
+    {
+        {     "victim", required_argument, NULL, 'v'},
+        {  "remote_ip", required_argument, NULL, 'r'},
+        {"remote_port", required_argument, NULL, 'p'},
+        {  "host_port", required_argument, NULL, 't'},
+        { "shared_mem", required_argument, NULL, 'm'},
+        {   "no_pages", required_argument, NULL, 'n'},
+        {         NULL,                 0, NULL,  0 }
+    };
+
+    while((opt = getopt_long(argc, argv, "hv:r:p:t:m:n:", long_opt, NULL)) != -1)
+    {
+        switch (opt)
+        {
+        case 'v':
+            victim = strdup(optarg);
+            break;
+        
+        case 'r':
+            d_args.remote_ip = strdup(optarg);
+            break;
+
+        case 'p':
+            d_args.remote_port = atoi(optarg);
+            break;
+
+        case 't':
+            d_args.host_port = atoi(optarg);
+            break;
+        
+        case 'm':
+            d_args.flt_reg.fault_addr = strtol(optarg, NULL, 16);
+            break;
+        
+        case 'n':
+            d_args.flt_reg.num_pages = atoi(optarg);
+            break;
+
+        case 'h':
+        default:
+            usage();
+            break;
+        }
+        opt_counter++;
+    }
+    if (optind < argc || opt_counter != OPT_MANDATORY_COUNT)
+	{
+		usage();
 	}
 
-	waitpid(pid, 0, 0);	// sync with PTRACE_TRACEME
-	ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_EXITKILL);
+    child_pid = execute_victim(victim);
 
-	int terminate = 0;
-	int status = 0;
-	while (!terminate) {
-		//uint64_t pc = get_pc(pid);
-		//log_info("pc: 0x%lx", pc);
-		//status = 0;
-		ptrace(PTRACE_CONT, pid, 0L, 0L);
-		if (waitpid(pid, &status, 0) == -1) {
-			log_info("status %d", status);
-			if (WIFEXITED(status))
-				log_info("Child terminated normally.");
-			break;
-		}
-	}
-	clock_gettime(CLOCK_MONOTONIC, &tend);
-	log_info("Finish main loop! %.5f seconds.", ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
-           ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
-	return 0;
+    ret = compel_victim_stealFd(child_pid, PARASITE_CMD_GET_STDUFLT_FD, &d_args.uffd);
+    if(ret){
+        log_error("Stealing victim's uffd failed");
+        exit(EXIT_FAILURE);
+    }
+
+    d_args.victim_pid = child_pid;
+
+    ret = dsm_main(d_args);
+
+    return 0;
 }
