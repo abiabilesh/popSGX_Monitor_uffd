@@ -17,7 +17,7 @@
 
 #ifdef NDEBUG
 /* compile with all debug messages removed */
-#define log_debug(M, ...)
+#define log_debug(M, ...) do {} while(0)
 #else
 #ifdef LOG_NOCOLORS
   #define log_debug(M, ...) fprintf(stderr, "DEBUG " M " at %s (%s:%d) \n", ##__VA_ARGS__, __func__, __FILE__, __LINE__)

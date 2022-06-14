@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <stdbool.h>
 
+#include "log.h"
 #include "bus_functions.h"
 #include "userfault_handler.h"
 #include "msi_statemachine.h"
@@ -34,7 +35,7 @@ void bus_thread_cleanup_handler(void* arg)
 	/* Close out the sockets so we don't have loose ends */
 	int sk = *(int*)arg;
 	/* Ensure it's not stdin/out/err */
-	printf("Cleanup handler called: %d\n", sk);
+	log_debug("Cleanup handler called: %d", sk);
 	if (sk >= 2)
 		close(sk);
 }
@@ -61,15 +62,15 @@ void* bus_thread_handler(void* arg)
 				close(bus_args->fd);
 				return NULL;
 			case INVALID_STATE_READ:
-				printf("INVALID_STATE_READ_MSG_RECEIVED\n");
+				log_debug("INVALID_STATE_READ_MSG_RECEIVED");
 				msi_handle_page_request(bus_args->fd, &msg);
 			break;
 			case INVALIDATE:
-				printf("INVALIDATE_RECEIVED\n");
+				log_debug("INVALIDATE_RECEIVED");
 				msi_handle_page_invalidate(bus_args->fd, &msg);
 			break;
 			case PAGE_REPLY:
-				printf("PAGE_REPLY_RECEIVED\n");
+				log_debug("PAGE_REPLY_RECEIVED");
 			//if (*(msg.payload.page_data) != (int)0){
 				//printf("payload page data: %s\n",
 			//	       msg.payload.page_data);
@@ -80,7 +81,7 @@ void* bus_thread_handler(void* arg)
 				//printf("INVALIDATE_ACK_RECEIVED\n");
 			break;
 			default:
-				printf("Unhandled bus request, %d\n",
+				log_error("Unhandled bus request, %d",
 				       msg.message_type);
 			break;
 		}
@@ -125,13 +126,13 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 		errExit("Server listen failed");
 	}
 
-	printf("Waiting for connections\n");
+	log_info("Waiting for connections");
 
 	ask = accept(sk, NULL, NULL);
 	if (ask < 0) {
 		errExit("Server accept failed");
 	}
-	printf("Connection established with client\n");
+	log_info("Connection established with client");
 
 	page_size = sysconf(_SC_PAGE_SIZE);
 	num_pages = flt_reg.num_pages;;
@@ -144,7 +145,7 @@ int setup_server(int port, struct bus_thread_args* arg_output, struct mmap_args*
 	if (mmap_ptr == MAP_FAILED)
 		errExit("mmap");
 
-	printf("Local mmap: Addr: %p, Length: %d\n"
+	log_info("Local mmap: Addr: %p, Length: %d"
 	       ,mmap_ptr, len);
 
 	set_pages_in_use(num_pages);
@@ -188,7 +189,7 @@ int try_connect_client(int port, char* ip_string, struct
 		goto out_socket_err;
 	}
 
-	printf("Connecting to %s:%d\n", ip_string, port);
+	log_info("Connecting to %s:%d", ip_string, port);
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
@@ -205,12 +206,12 @@ int try_connect_client(int port, char* ip_string, struct
 	}
 
 	/* Initial pairing read to establish memory region */
-	printf("Awaiting pairing request\n");
+	log_info("Awaiting pairing request");
 	rd = read(sk, &msg, sizeof(msg));
 	if (rd < 0)
 		errExit("Read Error");
 	if (msg.message_type == CONNECTION_ESTABLISHED) {
-		printf("Pairing Request Received: Addr: 0x%lx, Length: %lu\n"
+		log_info("Pairing Request Received: Addr: 0x%lx, Length: %lu"
 		       ,msg.payload.memory_pair.address,
 		       msg.payload.memory_pair.size);
 	}

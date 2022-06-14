@@ -10,6 +10,7 @@
 #include <string.h>
 #include <pthread.h>
 
+#include "log.h"
 #include "msi_statemachine.h"
 #include "compel_handler.h"
 
@@ -111,8 +112,7 @@ void msi_handle_page_request(int sk, struct msi_message* in_msg)
 	if (write_ret <= 0) {
 		goto out_bad;
 	}
-				//printf("[%p]MODIFIED TO SHARED\n",
-				//       page_to_transition->start_address);
+
 	page_to_transition->tag = SHARED;
 	goto out_good;
 out_bad:
@@ -137,6 +137,7 @@ void msi_handle_page_invalidate (int sk, struct msi_message* in_msg)
 
 	pthread_mutex_lock(&page_to_transition->mutex);
 	page_to_transition->tag = INVALID;
+        log_info("received request to madvise %p", page_to_transition->start_address);
 	if (madvise(page_to_transition->start_address, sysconf(_SC_PAGE_SIZE), MADV_DONTNEED)) {
 		errExit("fail to madvise");
 	}
@@ -144,7 +145,7 @@ void msi_handle_page_invalidate (int sk, struct msi_message* in_msg)
         if(write_ret){
         errExit("Setting madvise on victim failed");
 	}
-	printf("[%p]TO_INVALID\n", page_to_transition->start_address);
+	log_debug("[%p]TO_INVALID", page_to_transition->start_address);
 	msg.message_type = INVALIDATE_ACK;
 	/* Ignore payload for now until we add error handling */
 	write_ret = write(sk, &msg, sizeof(msg));
@@ -185,7 +186,7 @@ void handle_write_command(int sk, void *addr, void* data, size_t data_size)
 	page_num = 0;
 	//if (page_num < g_pages_mapped) {
 	if (page_to_transition) {
-		printf("\nCopying %p to address %p\n", data, page_to_transition->start_address);
+		log_debug("Copying %p to address %p", data, page_to_transition->start_address);
 		memcpy(page_to_transition->start_address, data, data_size);
 		#if 1
 		page_to_transition->tag = MODIFIED;

@@ -17,7 +17,7 @@ DEPEXT      := d
 OBJEXT      := o
 
 # Flags, Libraries and Includes
-CFLAGS      := -Wall -O3 -g
+CFLAGS      := -Wall -O3 -g -D NDEBUG
 LIB         := -lpthread
 INC         := -I$(INCDIR) -I/usr/local/include
 INCDEP      := -I$(INCDIR)

@@ -129,9 +129,9 @@ int parasite_daemon_cmd(int cmd, void *args)
 		return (send_uffd());
 		break;
   
-  case PARASITE_CMD_SET_MADVISE_NO_NEED:
-    return set_madvise((*(uint64_t *)args), 4096, MADV_DONTNEED);
-    break;
+        case PARASITE_CMD_SET_MADVISE_NO_NEED:
+               return set_madvise((*(uint64_t *)args), 4096, MADV_DONTNEED);
+               break;
 
 	default:
 		break;

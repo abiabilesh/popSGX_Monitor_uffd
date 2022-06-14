@@ -18,12 +18,13 @@ int main(int argc, char **argv)
 //        signal(SIGINT,sig_handler);
 	//hello += 0xf;
 	do {
-        printf("Victim about to access a new page !!!!!!!!!!!!!!\n");
+        printf("Victim about to write a new page @ %p!!!!!!!!!!!!!!\n", hello);
         i++;
         //fprintf(stdout,"Hello world!!\n");
 	
 	int k = 0;
 
+	sleep(1);
   #if 1
 	if(i%2 == 0)
 	    *(hello + 0xf) = 'm';

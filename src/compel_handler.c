@@ -13,7 +13,7 @@ static void intialize_compel_handle(void);
 
 static void print_vmsg(unsigned int lvl, const char *fmt, va_list parms)
 {
-	printf("\tLC%u: ", lvl);
+	log_debug("\tLC%u: ", lvl);
 	vprintf(fmt, parms);
 }
 
@@ -34,7 +34,7 @@ static int compel_setup(pid_t pid){
         intialize_compel_handle();
 
     cmpl_hdl.victim_pid = pid;
-    log_debug("Stoping the victim for compel code injection");
+    log_info("Stoping the victim for compel code injection");
     state = compel_stop_task(pid);
     if(state < 0){
         log_error("Could not stop the victim for compel infection");
@@ -192,6 +192,11 @@ int compel_victim_madvise(pid_t victim_pid, int cmd, uint64_t page_addr){
     *arg = page_addr;
     
     log_debug("madvising the victim pid %d address %p with the command %d", victim_pid, page_addr, cmd);
+    if(compel_rpc_call_sync(cmd, cmpl_hdl.ctl)){
+        log_error("compel_rpc_call_sync failed");
+        goto fail_compel_victim_madvise;
+    }
+
     if(compel_rpc_call_sync(cmd, cmpl_hdl.ctl)){
         log_error("compel_rpc_call_sync failed");
         goto fail_compel_victim_madvise;

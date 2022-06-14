@@ -16,13 +16,18 @@ int main(int argc, char **argv)
 {
 	int i = 0;// aux;
 //        signal(SIGINT,sig_handler);
-	sleep(10);
+	sleep(5);
+	sleep(5);
+	sleep(5);
+	sleep(5);
 	hello += 0xf;
 	do {
-                printf("Victim about to access a new page !!!!!!!!!!!!!!\n");
+                printf("Victim about to read a new page @ %p!!!!!!!!!!!!!!\n", hello);
                 i++;
                 //fprintf(stdout,"Hello world!!\n");
 		fprintf(stdout,"%c\n", *hello);
+		sleep(5);
+		sleep(5);
 		hello += 4096;
                 if(i%26 == 0)
                     hello = 0x1000f;
