@@ -29,7 +29,7 @@ static int compel_destruct(void);
 static int compel_stealFd(int cmd, int *stolen_fd);
 
 //User functionalities
-int compel_victim_stealFd(pid_t victim_pid, int cmd, int *fd);
+int compel_victim_stealFd(pid_t victim_pid, int cmd, int *fd, uint64_t shared_addr, uint64_t no_of_pages);
 int compel_victim_madvise(pid_t victim_pid, int cmd, uint64_t page_addr);
 
 #endif

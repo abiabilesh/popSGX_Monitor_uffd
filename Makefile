@@ -4,7 +4,7 @@
 CC          := gcc
 
 # The Target Binary Program
-TARGET      := uffd
+TARGET      := popSGX_Monitor
 
 # The Directories, Source, Includes, Objects, Binary and Resources
 SRCDIR      := src
@@ -73,6 +73,7 @@ directories:
 
 # Clean only Objecst
 clean: parasite_clean
+	@$(RM) -rf $(TARGETDIR)
 	@$(RM) -rf $(BUILDDIR)
 
 # Full Clean, Objects and Binaries

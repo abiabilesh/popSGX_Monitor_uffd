@@ -110,7 +110,11 @@ int main(int argc, char *argv[]){
 
     child_pid = execute_victim(victim);
 
-    ret = compel_victim_stealFd(child_pid, PARASITE_CMD_GET_STDUFLT_FD, &d_args.uffd);
+    ret = compel_victim_stealFd(child_pid,                      \
+                                PARASITE_CMD_GET_STDUFLT_FD,    \
+                                &d_args.uffd,                   \
+                                d_args.flt_reg.fault_addr,      \
+                                d_args.flt_reg.num_pages);
     if(ret){
         log_error("Stealing victim's uffd failed");
         exit(EXIT_FAILURE);
