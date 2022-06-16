@@ -148,14 +148,19 @@ fail_compel_stealFd:
 }
 
 
-int compel_victim_stealFd(pid_t victim_pid, int cmd, int *uffd){
+int compel_victim_stealFd(pid_t victim_pid, int cmd, int *uffd, uint64_t shared_page_addr, uint64_t no_of_pages){
     int ret = -1;
-
+    uint64_t *arg;
+    
     ret = compel_setup(victim_pid);
     if(ret){
         log_error("Compel setup failed");
         goto fail_compel_victim_stealFd;
     }
+
+    arg = compel_parasite_args(cmpl_hdl.ctl, sizeof(shared_page_addr) + sizeof(no_of_pages));
+    arg[0] = shared_page_addr;
+    arg[1] = no_of_pages;
 
     ret = compel_stealFd(cmd, uffd);
     if(ret){
