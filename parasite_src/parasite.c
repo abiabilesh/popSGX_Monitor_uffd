@@ -105,9 +105,9 @@ void parasite_cleanup(void)
 int parasite_daemon_cmd(int cmd, void *args)
 {
     int page_size;
-    u_int64_t noPages;
-    u_int64_t memorySize;
-    char* addr;
+    uint64_t noPages;
+    uint64_t memorySize;
+    uint64_t addr, noOfPages;
     int ret;
     
     //userfaultfd stuffs
@@ -129,9 +129,9 @@ int parasite_daemon_cmd(int cmd, void *args)
 		break;
 
 	case PARASITE_CMD_GET_STDUFLT_FD:
-                uint64_t addr = *(uint64_t*)args;
-                uint64_t no_of_pages = *(uint64_t*)(args + 8);
-		return (send_uffd(addr, no_of_pages));
+                addr = *(uint64_t*)args;
+                noOfPages = *(uint64_t*)(args + 8);
+		return (send_uffd(addr, noOfPages));
 		break;
   
         case PARASITE_CMD_SET_MADVISE_NO_NEED:

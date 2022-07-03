@@ -1,54 +1,132 @@
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h> 
 #include <unistd.h>
 
-#include "compel_handler.h"
-#include "log.h"
+#include "../inc/compel_handler.h"
+#include "../inc/log.h"
 
-static compel_handle cmpl_hdl = {0};
-
-static void intialize_compel_handle(void);
-
+/* --------------------------------------------------------------------
+ * Defines
+ * -------------------------------------------------------------------*/
 #define COMPEL_LOG_LEVEL COMPEL_LOG_ERROR
 
+/* --------------------------------------------------------------------
+ * Local Functions
+ * -------------------------------------------------------------------*/
 static void print_vmsg(unsigned int lvl, const char *fmt, va_list parms)
 {
 	log_debug("\tLC%u: ", lvl);
 	vprintf(fmt, parms);
 }
 
-static void intialize_compel_handle(void){
-    compel_log_init(print_vmsg, COMPEL_LOG_LEVEL);
-    cmpl_hdl.ctl = NULL;
-    cmpl_hdl.status = -1;
-    cmpl_hdl.victim_pid = -1;
-    cmpl_hdl.is_intialized = false;
+/* --------------------------------------------------------------------
+ * Functions executed with locks
+ * -------------------------------------------------------------------*/
+
+static int __compel_stealFd(infect_handler *infectHdl, int cmd, int *traceeFd){
+    int ret  = 0;
+
+    log_debug("Stealing the %d fd from the victim pid %d", cmd, infectHdl->pid);
+    if(!compel_rpc_call(cmd, infectHdl->ctl)){
+        if(!compel_util_recv_fd(infectHdl->ctl, traceeFd)){
+            if(compel_rpc_sync(cmd, infectHdl->ctl)){
+                log_error("Couldn't finalize the command %d", cmd);
+                goto fail_compel_stealFd;
+            }
+        }else{
+            log_error("Could not receive the %d fd", cmd);
+            goto fail_compel_stealFd;
+        }
+    }else{
+        log_error("Cannot run the command %d", cmd);
+        goto fail_compel_stealFd;
+    }
+
+return ret;
+
+fail_compel_stealFd:
+    return -1;
 }
 
-static int compel_setup(pid_t pid){
+static int __compel_tracee_stealFd(infect_handler *infectHdl, stealFd_args *args){
+    int ret = 0;
+    uint64_t *compel_arg;
+    
+    if(args->fd_type == PARASITE_CMD_GET_STDUFLT_FD){
+        //Preparing arguments for the compel only for the case of UFFD
+        compel_arg = compel_parasite_args(infectHdl->ctl,                                                                   \
+                                  sizeof(args->shared_page_address) + sizeof(args->no_of_pages));
+        compel_arg[0] = args->shared_page_address;
+        compel_arg[1] = args->no_of_pages;
+    }
+
+    ret = __compel_stealFd(infectHdl, args->fd_type, &args->tracee_fd);
+    if(ret){
+        args->tracee_fd = -1;
+        log_error("Stealing the fd from tracee failed");
+        goto compel_stealFd_fail;
+    }
+
+compel_stealFd_fail:
+    return ret;
+}
+
+
+static int __compel_tracee_madvise(infect_handler *infectHdl, madvise_args *args){
+    int ret = 0;
+    uint64_t *compel_arg;
+    int cmd = PARASITE_CMD_SET_MADVISE_NO_NEED;
+
+    compel_arg = compel_parasite_args(infectHdl->ctl, uint64_t);
+    *compel_arg = args->page_address;
+
+    log_debug("madvising the victim pid %d address %p with the command %d",                                                 \
+                                        infectHdl->pid, args->page_address, cmd);
+    
+    if(ret = compel_rpc_call_sync(cmd, infectHdl->ctl)){
+        log_error("compel_rpc_call_sync failed");
+        goto fail_compel_victim_madvise;
+    }
+
+    if(ret = compel_rpc_call_sync(cmd, infectHdl->ctl)){
+        log_error("compel_rpc_call_sync failed");
+        goto fail_compel_victim_madvise;
+    }
+
+fail_compel_victim_madvise:
+    return ret;
+}
+
+
+static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid){
+    int ret = 0;
     int state;
     struct parasite_ctl *ctl;
-    struct infect_ctx *ictx;
+    struct infect_ctx *ictx;  
 
-    if(!cmpl_hdl.is_intialized)
-        intialize_compel_handle();
+    if(infectHdl == NULL){
+        log_error("Infect Handle is NULL");
+        return -1;
+    }
 
-    cmpl_hdl.victim_pid = pid;
-    log_info("Stoping the victim for compel code injection");
+    memset(infectHdl, 0, sizeof(infect_handler));
+    infectHdl->pid = pid;
+    
+    log_info("Stoping the tracee for compel code injection");
     state = compel_stop_task(pid);
     if(state < 0){
         log_error("Could not stop the victim for compel infection");
         return state;
     }
-    cmpl_hdl.status = state;
+    infectHdl->state = state;
 
     log_debug("Preparing compel's parasitic context");
     ctl = compel_prepare(pid);
     if(!ctl){
         log_error("Could not create compel context");
-        goto fail_compel_setup;
+        goto fail_compel_create_context;
     }
-    cmpl_hdl.ctl = ctl;
+    infectHdl->ctl = ctl;
 
     /*
      * First -- the infection context. Most of the stuff
@@ -56,163 +134,132 @@ static int compel_setup(pid_t pid){
      * log descriptor for parasite side, library cannot
      * live w/o it.
      */
-    ictx = compel_infect_ctx(cmpl_hdl.ctl);
+    ictx = compel_infect_ctx(infectHdl->ctl);
     ictx->log_fd = STDERR_FILENO;
-    
-    log_debug("Preparing the parasite code header for injection");
-    parasite_setup_c_header(cmpl_hdl.ctl);
 
-    log_debug("Infecting the victim through code injection");
-    if(compel_infect(cmpl_hdl.ctl, 1, sizeof(int))){
-        log_error("Could not infect the victim");
-        goto fail_compel_setup;
+    log_debug("Preparing the parasite code header for injection");
+    parasite_setup_c_header(infectHdl->ctl);
+
+    log_debug("Infecting the tracee through code injection");
+    if(compel_infect(infectHdl->ctl, 1, sizeof(int))){
+        log_error("Could not infect the tracee");
+        goto fail_compel_prepare_infection;
     }
 
-    cmpl_hdl.is_intialized = true;
+    return ret;
 
-    return 0;
-
-fail_compel_setup:
+fail_compel_prepare_infection:
+    log_info("Curing the victim");
+    compel_cure(infectHdl->ctl);
+fail_compel_create_context:
+    log_info("Resuming the tracee");
+    compel_resume_task(pid, infectHdl->state,infectHdl->state);
+    infectHdl->state = -1;
     return -1;
 }
 
-static int compel_destruct(void){
+
+static int __compel_disinfection(infect_handler *infectHdl){
+    int ret = 0;
     struct infect_ctx *ictx;
 
-    if(!cmpl_hdl.is_intialized){
-        log_error("Compel is not intialized");
-        goto fail_compel_destruct;
-    }
-
-    int pid = cmpl_hdl.victim_pid;
-    int state = cmpl_hdl.status;
-
     log_debug("Curing the victim");
-    if(compel_cure(cmpl_hdl.ctl)){
+    if(compel_cure(infectHdl->ctl)){
+        ret = -1;
         log_error("Could not cure the victim");
-        goto fail_compel_destruct;
     }
 
     log_debug("Resuming the victim for normal execution");
-    if(compel_resume_task(pid, state, state)){
+    if(compel_resume_task(infectHdl->pid, infectHdl->state, infectHdl->state)){
+        ret = -1;
         log_error("Could not unseize the victim task");
-        goto fail_compel_destruct;
     }
 
     /*
      *socket has to be closed in order for the consecutive
      *compel calls to work like compel_victim_madvise after compel_victim_stealFd
      */
-    ictx = compel_infect_ctx(cmpl_hdl.ctl);
+    ictx = compel_infect_ctx(infectHdl->ctl);
     close(ictx->sock);
-
-
-    cmpl_hdl.is_intialized = false;
-    cmpl_hdl.ctl = NULL;
-    cmpl_hdl.victim_pid = -1;
-    cmpl_hdl.status = -1;
-
-    return 0;
-
-fail_compel_destruct:
-    return -1;
-}
-
-static int compel_stealFd(int cmd, int *stolen_fd){
-    if(!cmpl_hdl.is_intialized){
-        log_error("Compel is not intialized");
-        goto fail_compel_stealFd;
-    }
-
-    log_debug("Stealing the %d fd from the victim pid %d", cmd, cmpl_hdl.victim_pid);
-    if(compel_rpc_call(cmd, cmpl_hdl.ctl)){
-        log_error("Cannot run the command %d", cmd);
-        goto fail_compel_stealFd;
-    }
-
-    if(compel_util_recv_fd(cmpl_hdl.ctl, stolen_fd)){
-        log_error("Could not receive the %d fd", cmd);
-        goto fail_compel_stealFd;
-    }
-
-    if(compel_rpc_sync(cmd, cmpl_hdl.ctl)){
-        log_error("Could not finalize the command %d", cmd);
-        goto fail_compel_stealFd;
-    }
-
-    log_debug("Successfully stolen the fd %d", *stolen_fd);
-    return 0;
-
-fail_compel_stealFd:
-    return -1;
-}
-
-
-int compel_victim_stealFd(pid_t victim_pid, int cmd, int *uffd, uint64_t shared_page_addr, uint64_t no_of_pages){
-    int ret = -1;
-    uint64_t *arg;
     
-    ret = compel_setup(victim_pid);
-    if(ret){
-        log_error("Compel setup failed");
-        goto fail_compel_victim_stealFd;
+    memset(infectHdl, 0, sizeof(infect_handler));
+    
+    return ret;
+}
+
+/* --------------------------------------------------------------------
+ * Public Functions
+ * -------------------------------------------------------------------*/
+/**
+ * @brief It just initializes the compel handler
+ * @param void 
+ * @return int 
+ */
+int compel_handler_init(compel_handler *cmpHdl){
+    int ret = 0;
+  
+    if(pthread_mutex_init(&cmpHdl->compel_mutex, NULL) != 0){
+        log_error("Couldn't setup compel mutex lock");
+        ret = -1;
+        goto compel_mutex_failed;
     }
+    compel_log_init(print_vmsg, COMPEL_LOG_LEVEL);
+    cmpHdl->isInitialized = true;
 
-    arg = compel_parasite_args(cmpl_hdl.ctl, sizeof(shared_page_addr) + sizeof(no_of_pages));
-    arg[0] = shared_page_addr;
-    arg[1] = no_of_pages;
+    return ret;
 
-    ret = compel_stealFd(cmd, uffd);
-    if(ret){
-        log_error("Stealing the fd from victim failed");
-        goto fail_compel_victim_stealFd;
-    }
-    ret = compel_destruct();
-    if(ret){
-        log_error("Compel destruct failed");
-        goto fail_compel_victim_stealFd;
-    }
-
-    return 0;
-
-fail_compel_victim_stealFd:
+compel_mutex_failed:
     return ret;
 }
 
 
-int compel_victim_madvise(pid_t victim_pid, int cmd, uint64_t page_addr){
-    int ret = -1;
-    uint64_t *arg;
+int compel_ioctl(compel_handler *compelHandle, compel_ioctl_arg *args){
+    int ret = 0, sret = 0;
 
-    ret = compel_setup(victim_pid);
-    if(ret){
-        log_error("Compel setup failed");
-        goto fail_compel_victim_madvise;
+    if(compelHandle == NULL){
+        log_error("compel handle is NULL");
+        goto compel_ioctl_failed;
     }
 
-    /*
-	 * Setting the page address for madvise
-	 */
-	arg = compel_parasite_args(cmpl_hdl.ctl, uint64_t);
-    *arg = page_addr;
+    if(!compelHandle->isInitialized){
+        ret = compel_handler_init(compelHandle);
+        if(ret)
+            goto compel_ioctl_failed;
+    }
+
+    pthread_mutex_lock(&compelHandle->compel_mutex);
     
-    log_debug("madvising the victim pid %d address %p with the command %d", victim_pid, page_addr, cmd);
-    if(compel_rpc_call_sync(cmd, cmpl_hdl.ctl)){
-        log_error("compel_rpc_call_sync failed");
-        goto fail_compel_victim_madvise;
-    }
-
-    if(compel_rpc_call_sync(cmd, cmpl_hdl.ctl)){
-        log_error("compel_rpc_call_sync failed");
-        goto fail_compel_victim_madvise;
-    }
-
-    ret = compel_destruct();
+    //Execution in mutex 
+    ret = __compel_prepare_infection(&compelHandle->infectHdl, args->tracee_pid);
     if(ret){
-        log_error("Compel destruct failed");
-        goto fail_compel_victim_madvise;
+        log_error("Compel infection of tracee failed");
+        goto compel_ioctl_failed;
     }
 
-fail_compel_victim_madvise:
-    return ret;
+    switch (args->cmd)
+    {
+    
+    case STEALFD:
+        sret = __compel_tracee_stealFd(&compelHandle->infectHdl, &(args->cmd_args.fdArgs));
+        break;
+    
+    case MADVISE:
+        sret = __compel_tracee_madvise(&compelHandle->infectHdl, &(args->cmd_args.madvArgs));
+        break;
+
+    default:
+        log_error("compel_ioctl command is wrong!!");
+        break;
+    }
+
+    ret = __compel_disinfection(&compelHandle->infectHdl);
+    if(ret){
+        log_error("Compel disinfection failed");
+        goto compel_ioctl_failed;
+    }
+
+
+compel_ioctl_failed:
+    pthread_mutex_unlock(&compelHandle->compel_mutex);
+    return ret = ((sret != 0) || (ret != 0)) ? 1 : 0;
 }
