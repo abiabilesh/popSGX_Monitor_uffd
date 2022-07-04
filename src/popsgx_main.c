@@ -2,9 +2,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <getopt.h>
+
 #include "../inc/popsgx.h"
 #include "../inc/compel_handler.h"
 #include "../inc/popsgx_page_handler.h"
+#include "../inc/dsm_handler.h"
 #include "../inc/log.h"
 
 extern char* __progname;
@@ -49,6 +51,20 @@ static int execute_popsgx_tracee(popsgx_child *child){
     
     log_info("Successfully forked the tracee as a child process %d", pid);
     return 0;
+}
+
+static int popsgx_setup_memory(popsgx_app* popsgx, long int address, int no_pages){
+    int ret = 0;
+    dsm_handler *dsm = &popsgx->dsmHandler;
+
+    ret = dsm_establish_communication(dsm, &address, &no_pages);
+    if(ret){
+        log_error("dsm_establish_communication failed");
+        goto popsgx_setup_memory_fail;
+    }
+
+popsgx_setup_memory_fail:
+    return ret;
 }
 
 int main(int argc, char* argv[]){
@@ -131,7 +147,7 @@ int main(int argc, char* argv[]){
     ret = compel_handler_init(&popsgx->cmplHandler);
     if(ret){
         log_error("Could not retrieve the uffd");
-        goto popsgx_fail;
+        goto popsgx_tracee_fail;
     }
 
     compel_ioctl_arg compelArgs;
@@ -145,7 +161,7 @@ int main(int argc, char* argv[]){
     ret = compel_ioctl(&popsgx->cmplHandler, &compelArgs);
     if(ret){
         log_error("Could not retrieve the uffd");
-        goto popsgx_fail;
+        goto popsgx_tracee_fail;
     }
 
     log_debug("The stolen uffd is %d", compelArgs.cmd_args.fdArgs.tracee_fd);
@@ -156,13 +172,32 @@ int main(int argc, char* argv[]){
         goto popsgx_pgHandler_fail;
     }
 
-    log_debug("%d", popsgx->pgHandler.buffer_pages[2].tag);
+    ret = dsm_handler_init(&popsgx->dsmHandler, \
+                            remote_ip,          \
+                            remote_port,        \
+                            host_port );
+    if(ret){
+        log_error("DSM Handler initialization failed");
+        goto popsgx_pgHandler_fail;
+    }
+
+    ret = popsgx_setup_memory(popsgx,                     \
+                              shared_physical_address,    \
+                              no_of_shared_pages);
+    if(ret){
+        log_error("Couldn't setup buffers across nodes");
+        goto popsgx_dsm_fail;
+    }
 
     while(1);
 
     return 0;
 
+popsgx_dsm_fail:
+    dsm_handler_destroy(&popsgx->dsmHandler);
 popsgx_pgHandler_fail:
+    popsgx_pgHandler_destroy(&popsgx->pgHandler);
+popsgx_tracee_fail:
     //Have to implement killing the tracee process
 popsgx_fail:
     free(popsgx);

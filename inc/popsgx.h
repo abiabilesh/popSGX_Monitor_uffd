@@ -3,6 +3,7 @@
 
 #include "../inc/compel_handler.h"
 #include "../inc/popsgx_page_handler.h"
+#include "../inc/dsm_handler.h"
 
 /* --------------------------------------------------------------------
  * Structures & Required Datatypes
@@ -18,6 +19,7 @@ typedef struct popsgx_app_t{
     popsgx_child child;
     compel_handler cmplHandler;
     popsgx_page_handler pgHandler;  
+    dsm_handler dsmHandler;
 } popsgx_app;
 
 #endif

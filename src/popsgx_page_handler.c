@@ -4,6 +4,16 @@
 #include "../inc/popsgx_page_handler.h"
 #include "../inc/log.h"
 
+
+/* --------------------------------------------------------------------
+ * Local Functions declarations
+ * -------------------------------------------------------------------*/
+static void __initialize_page(popsgx_page* page);
+static int __initialize_pages(popsgx_page** pages, int no_pages);
+
+static void __destroy_page(popsgx_page* page);
+static void __destroy_pages(popsgx_page **pages, int no_pages);
+
 /* --------------------------------------------------------------------
  * Local Functions
  * -------------------------------------------------------------------*/
@@ -35,6 +45,19 @@ initialize_pages_fail:
     return ret;
 }
 
+static void __destroy_page(popsgx_page* page){
+    pthread_mutex_destroy(&page->mutex_lock);
+}
+
+static void __destroy_pages(popsgx_page **pages, int no_pages){
+
+    for(int iter = 0; iter < no_pages; iter++){
+        __destroy_page((*pages)+iter);
+    }
+
+    free(*pages);
+}
+
 /* --------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------*/
@@ -60,4 +83,8 @@ int popsgx_pgHandler_init(popsgx_page_handler *pgHandler, int no_pages){
 popsgx_pgHandler_init_fail:
     free(pgHandler->buffer_pages);
     return ret;
+}
+
+void popsgx_pgHandler_destroy(popsgx_page_handler *pgHandler){
+    __destroy_pages(&pgHandler->buffer_pages, pgHandler->no_pages);
 }

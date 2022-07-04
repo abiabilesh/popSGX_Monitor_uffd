@@ -11,6 +11,16 @@
 #define COMPEL_LOG_LEVEL COMPEL_LOG_ERROR
 
 /* --------------------------------------------------------------------
+ * Local Functions declarations
+ * -------------------------------------------------------------------*/
+static int __compel_stealFd(infect_handler *infectHdl, int cmd, int *traceeFd);
+static int __compel_tracee_stealFd(infect_handler *infectHdl, stealFd_args *args);
+
+static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid);
+static int __compel_disinfection(infect_handler *infectHdl);
+
+
+/* --------------------------------------------------------------------
  * Local Functions
  * -------------------------------------------------------------------*/
 static void print_vmsg(unsigned int lvl, const char *fmt, va_list parms)

@@ -29,14 +29,8 @@ typedef struct popsgx_page_handler_t{
 }popsgx_page_handler;
 
 /* --------------------------------------------------------------------
- * Local Functions
- * -------------------------------------------------------------------*/
-static void __initialize_page(popsgx_page* page);
-static int __initialize_pages(popsgx_page** pages, int no_pages);
-
-/* --------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------*/
 int popsgx_pgHandler_init(popsgx_page_handler *pgHandler, int no_pages);
-
+void popsgx_pgHandler_destroy(popsgx_page_handler *pgHandler);
 #endif

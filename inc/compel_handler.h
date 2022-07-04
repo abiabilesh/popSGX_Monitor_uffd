@@ -61,17 +61,6 @@ typedef struct compel_ioctl_arg{
    compel_args cmd_args;
 }compel_ioctl_arg;
 
-
-/* --------------------------------------------------------------------
- * Local Functions
- * -------------------------------------------------------------------*/
-static int __compel_stealFd(infect_handler *infectHdl, int cmd, int *traceeFd);
-static int __compel_tracee_stealFd(infect_handler *infectHdl, stealFd_args *args);
-
-static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid);
-static int __compel_disinfection(infect_handler *infectHdl);
-
-
 /* --------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------*/
