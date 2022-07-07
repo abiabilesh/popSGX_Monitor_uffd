@@ -1,11 +1,19 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 #include "../inc/messages.h"
 #include "../inc/log.h"
 #include "../inc/dsm_handler.h"
+#include "../inc/msi_handler.h"
 
+typedef struct bus_handler_args{
+    dsm_handler *dsm;
+    msi_handler *msi;
+}bus_handler_args;
+
+bus_handler_args bus_args;
 
  /* --------------------------------------------------------------------
  * Local Functions declarations
@@ -110,6 +118,67 @@ connect_as_server_failed:
     return ret;
 }
 
+static void bus_thread_cleanup_handler(void* arg)
+{
+	/* Close out the sockets so we don't have loose ends */
+	int sk = *(int*)arg;
+	/* Ensure it's not stdin/out/err */
+	log_debug("Cleanup handler called: %d", sk);
+	if (sk >= 2)
+		close(sk);
+}
+
+void* bus_handler_func(void *arg){
+    int rd;
+    struct msi_message msg;
+    bus_handler_args* bus_args = (bus_handler_args*)arg;
+    dsm_handler *dsm = bus_args->dsm;
+    msi_handler *msi = bus_args->msi;
+
+    //log_debug("bus handler msi %p", msi->pgHdl);
+
+    if(!msi){
+        log_error("The bus handler argument is NULL");
+    }
+
+    pthread_cleanup_push(bus_thread_cleanup_handler, &dsm->socket_fd);
+
+    for(;;){
+        rd = read(dsm->socket_fd, &msg, sizeof(msg));
+        if(rd < 0){
+            log_error("Read error in dsm");
+            return NULL;
+        }
+
+        switch(msg.message_type){
+            case DISCONNECT:
+                close(dsm->socket_fd);
+                return NULL;
+            case INVALID_STATE_READ:
+                log_debug("INVALID_STATE_READ_MSG_RECEIVED");
+                msi_handle_page_request(msi, dsm->socket_fd, &msg);
+                break;
+            case INVALIDATE:
+                log_debug("INVALIDATE RECEIVED");
+                msi_handle_page_invalidate(msi, dsm->socket_fd, &msg);
+                break;
+            case PAGE_REPLY:
+                log_debug("PAGE_REPLY_RECEIVED");
+                msi_handle_page_reply(msi, dsm->socket_fd, &msg);
+                break;
+            case INVALIDATE_ACK:
+                log_debug("INVALIDATE_ACK");
+                break;
+            default:
+                log_error("Unhandled bus request, %d", msg.message_type);
+                break;
+        }
+    }
+
+    pthread_cleanup_pop(0);
+    return NULL;
+}
+
 /* --------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------*/
@@ -150,11 +219,21 @@ int dsm_establish_communication(dsm_handler *dsm, long int *pg_address, int *no_
             return ret;
         }
         dsm->mode = SERVER_MODE;
+
+        int nret;
+        msg.message_type = CONNECTION_ESTABLISHED;
+        msg.payload.memory_pair.address = (uint64_t) *pg_address;
+        msg.payload.memory_pair.size = *no_pgs;
+        nret = write(dsm->socket_fd, &msg, sizeof(msg));
+        if(nret <= 0){
+            ret = nret;
+            log_error("Couldn't send message to the client side");
+        }
+
+        log_info("Sent the shared memory address information to client");
+
     }else{
         dsm->mode = CLIENT_MODE;
-    }
-
-    if(dsm->mode == CLIENT_MODE){
         int nret;
         nret = read(dsm->socket_fd, &msg, sizeof(msg));
         if(nret < 0){
@@ -175,21 +254,23 @@ int dsm_establish_communication(dsm_handler *dsm, long int *pg_address, int *no_
 
         *pg_address = msg.payload.memory_pair.address;
         *no_pgs = msg.payload.memory_pair.size;
-
-    }else if(dsm->mode == SERVER_MODE){
-        int nret;
-        msg.message_type = CONNECTION_ESTABLISHED;
-        msg.payload.memory_pair.address = (uint64_t) *pg_address;
-        msg.payload.memory_pair.size = *no_pgs;
-        nret = write(dsm->socket_fd, &msg, sizeof(msg));
-        if(nret <= 0){
-            ret = nret;
-            log_error("Couldn't send message to the client side");
-        }
-
-        log_info("Sent the shared memory address information to client");
     }
 
 dsm_establish_communication_fail:
+    return ret;
+}
+
+int dsm_handle_bus_messages(dsm_handler *dsm, msi_handler *msi){
+    int ret = 0;
+
+
+    bus_args.dsm = dsm;
+    bus_args.msi = msi;
+
+    ret = pthread_create(&dsm->bus_handler_thread, NULL, bus_handler_func, (void *)&bus_args);
+    if(ret != 0){
+        log_error("Could not establish bus handler thread");
+    }
+
     return ret;
 }

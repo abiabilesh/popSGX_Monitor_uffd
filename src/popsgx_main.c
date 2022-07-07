@@ -6,14 +6,23 @@
 #include "../inc/popsgx.h"
 #include "../inc/compel_handler.h"
 #include "../inc/popsgx_page_handler.h"
+#include "../inc/msi_handler.h"
 #include "../inc/dsm_handler.h"
 #include "../inc/log.h"
+#include "../inc/uffd_handler.h"
+#include "../inc/messages.h"
 
 extern char* __progname;
 
 // Required number of arguments for the application
 #define OPT_MANDATORY_COUNT 6
 
+// Static function declaration
+static void usage(void);
+static int popsgx_execute_tracee(popsgx_child *child);
+static int popsgx_setup_memory(popsgx_app* popsgx, long int address, int no_pages);
+
+// Function implementation 
 static void usage(void)
 {
     log_info("\n"
@@ -32,7 +41,7 @@ static void usage(void)
     exit(EXIT_SUCCESS);
 }
 
-static int execute_popsgx_tracee(popsgx_child *child){
+static int popsgx_execute_tracee(popsgx_child *child){
     int ret = -1;
     pid_t pid;
 
@@ -56,14 +65,53 @@ static int execute_popsgx_tracee(popsgx_child *child){
 static int popsgx_setup_memory(popsgx_app* popsgx, long int address, int no_pages){
     int ret = 0;
     dsm_handler *dsm = &popsgx->dsmHandler;
+    popsgx_page_handler *pgHdl = &popsgx->pgHandler;
 
     ret = dsm_establish_communication(dsm, &address, &no_pages);
     if(ret){
         log_error("dsm_establish_communication failed");
+        goto popsgx_dsm_comm_fail;
+    }
+
+    ret = popsgx_pgHandler_init(pgHdl, no_pages);
+    if(!ret){
+        ret = pgHandler_setup_memory(pgHdl, address);
+        if(ret){
+            log_error("pgHandler setup memory failed");
+            goto popsgx_setup_memory_fail;
+        }
+    }else{
+        log_error("Could not initialize page handler");
         goto popsgx_setup_memory_fail;
     }
 
 popsgx_setup_memory_fail:
+    //Implement communication closing 
+popsgx_dsm_comm_fail:
+    return ret;
+}
+
+static int popsgx_start(popsgx_app* popsgx){
+    int ret = 0;
+
+    ret = msi_handler_init(&popsgx->msiHandler, popsgx->child.c_pid, &popsgx->pgHandler, &popsgx->cmplHandler);
+    if(ret){
+        log_error("Could not initialize msi handler");
+        ret = -1;
+        goto popsgx_start_fail;
+    }
+
+    ret = dsm_handle_bus_messages(&popsgx->dsmHandler, &popsgx->msiHandler);
+    if(ret){
+        log_error("Could not handle handle bus messages");
+        goto popsgx_kill_dsm_bus_thread;
+    }
+
+    return ret;
+
+popsgx_kill_dsm_bus_thread:
+    //Implement killing the thread
+popsgx_start_fail:
     return ret;
 }
 
@@ -138,7 +186,7 @@ int main(int argc, char* argv[]){
 		usage();
 	}
 
-    ret = execute_popsgx_tracee(&popsgx->child);
+    ret = popsgx_execute_tracee(&popsgx->child);
     if(ret){
         log_error("Could not execute the tracee for popsgx");
         goto popsgx_fail;
@@ -154,8 +202,8 @@ int main(int argc, char* argv[]){
     compelArgs.cmd = STEALFD;
     compelArgs.tracee_pid = popsgx->child.c_pid;
     compelArgs.cmd_args.fdArgs.fd_type = PARASITE_CMD_GET_STDUFLT_FD;
-    compelArgs.cmd_args.fdArgs.shared_page_address = 0x10000;
-    compelArgs.cmd_args.fdArgs.no_of_pages = 26;
+    compelArgs.cmd_args.fdArgs.shared_page_address = shared_physical_address;
+    compelArgs.cmd_args.fdArgs.no_of_pages = no_of_shared_pages;
     compelArgs.cmd_args.fdArgs.tracee_fd = -1;
 
     ret = compel_ioctl(&popsgx->cmplHandler, &compelArgs);
@@ -165,12 +213,6 @@ int main(int argc, char* argv[]){
     }
 
     log_debug("The stolen uffd is %d", compelArgs.cmd_args.fdArgs.tracee_fd);
-
-    ret = popsgx_pgHandler_init(&popsgx->pgHandler, no_of_shared_pages);
-    if(ret){
-        log_error("Could not initialize page handler");
-        goto popsgx_pgHandler_fail;
-    }
 
     ret = dsm_handler_init(&popsgx->dsmHandler, \
                             remote_ip,          \
@@ -189,10 +231,22 @@ int main(int argc, char* argv[]){
         goto popsgx_dsm_fail;
     }
 
+    ret = popsgx_start(popsgx);
+    if(ret){
+        log_error("popsgx start failed");
+        goto msi_handler_fail;
+    }
+
+    pthread_t userfaultfd_thread;
+    setup_userfaultfd_region(&popsgx->msiHandler ,&userfaultfd_thread,
+					&fault_handler_thread, popsgx->dsmHandler.socket_fd, compelArgs.cmd_args.fdArgs.tracee_fd, popsgx->child.c_pid);
+
     while(1);
 
     return 0;
 
+msi_handler_fail:
+    //Implement communication closing
 popsgx_dsm_fail:
     dsm_handler_destroy(&popsgx->dsmHandler);
 popsgx_pgHandler_fail:

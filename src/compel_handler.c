@@ -179,21 +179,21 @@ static int __compel_disinfection(infect_handler *infectHdl){
         log_error("Could not cure the victim");
     }
 
-    log_debug("Resuming the victim for normal execution");
-    if(compel_resume_task(infectHdl->pid, infectHdl->state, infectHdl->state)){
-        ret = -1;
-        log_error("Could not unseize the victim task");
-    }
-
     /*
      *socket has to be closed in order for the consecutive
      *compel calls to work like compel_victim_madvise after compel_victim_stealFd
      */
     ictx = compel_infect_ctx(infectHdl->ctl);
     close(ictx->sock);
-    
+
+    log_debug("Resuming the victim for normal execution");
+    if(compel_resume_task(infectHdl->pid, infectHdl->state, infectHdl->state)){
+        ret = -1;
+        log_error("Could not unseize the victim task");
+    }
+
     memset(infectHdl, 0, sizeof(infect_handler));
-    
+
     return ret;
 }
 
