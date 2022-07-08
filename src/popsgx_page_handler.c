@@ -14,6 +14,7 @@ static void __initialize_page(popsgx_page* page);
 static int __initialize_pages(popsgx_page** pages, int no_pages);
 static void __map_address_to_virtualAddress(popsgx_page** pages, uint64_t mmap_addr, int no_pages);
 static void __map_address_to_physicalAddress(popsgx_page** pages, uint64_t mmap_addr, int no_pages);
+static long int __popsgx_translate_address(long int map_start_address, long int start_address, long int offset_address);
 
 static void __destroy_page(popsgx_page* page);
 static void __destroy_pages(popsgx_page **pages, int no_pages);
@@ -21,6 +22,11 @@ static void __destroy_pages(popsgx_page **pages, int no_pages);
 /* --------------------------------------------------------------------
  * Local Functions
  * -------------------------------------------------------------------*/
+static long int __popsgx_translate_address(long int map_start_address, long int start_address, long int offset_address){
+    long int offset = start_address - offset_address;
+    return map_start_address + offset;     
+}
+
 static void __map_address_to_virtualAddress(popsgx_page** pages, uint64_t mmap_addr, int no_pages){
     popsgx_page *buffer_pages = *pages;
     uint64_t page_addr = mmap_addr;
@@ -97,6 +103,9 @@ int popsgx_pgHandler_init(popsgx_page_handler *pgHandler, int no_pages){
 
     pgHandler->no_pages = no_pages;
     pgHandler->is_initialized = true;
+    pgHandler->host_tracee_start_address = 0;
+    pgHandler->remote_tracee_start_address = 0;
+    pgHandler->monitor_start_address = 0;
 
     return ret;
 
@@ -109,15 +118,15 @@ void popsgx_pgHandler_destroy(popsgx_page_handler *pgHandler){
     __destroy_pages(&pgHandler->buffer_pages, pgHandler->no_pages);
 }
 
-int pgHandler_setup_memory(popsgx_page_handler *pgHandler, long int address){
+int pgHandler_setup_memory(popsgx_page_handler *pgHandler, long int host_address, long int remote_address){
     int adr, ret = 0;
     int no_pages = pgHandler->no_pages;
 
     if(pgHandler->is_initialized){
         
-        adr = mmap(address, no_pages * PAGE_SIZE,                                      \
-                 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED,           \
-                 -1, 0);                                                               \
+        adr = mmap(NULL, no_pages * PAGE_SIZE,                                          \
+                 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED,            \
+                 -1, 0);                                                                \
 
         if((void *)adr == -1){
             ret = adr;
@@ -125,11 +134,15 @@ int pgHandler_setup_memory(popsgx_page_handler *pgHandler, long int address){
             goto pgHandler_setup_memory_failed;
         }
         
-        memset(address, 0, no_pages * PAGE_SIZE);
+        memset(adr, 0, no_pages * PAGE_SIZE);
 
         //Map the address for the page handler
         __map_address_to_physicalAddress(&pgHandler->buffer_pages, adr, pgHandler->no_pages);
         __map_address_to_virtualAddress(&pgHandler->buffer_pages, adr, pgHandler->no_pages);
+
+        pgHandler->monitor_start_address = adr;
+        pgHandler->host_tracee_start_address = host_address;
+        pgHandler->remote_tracee_start_address = remote_address;
 
     }else{
         log_error("Page handler is not initialized");
@@ -178,4 +191,29 @@ int popsgx_set_page_tag(popsgx_page_handler *pgHandler, popsgx_page* page, enum 
 
 popsgx_set_page_tag_fail:
     return ret;
+}
+
+
+long int popsgx_host_to_remote_address(popsgx_page_handler *pgHandler, long int host_address){
+    return __popsgx_translate_address(pgHandler->remote_tracee_start_address, pgHandler->host_tracee_start_address, host_address);   
+}
+
+long int popsgx_remote_to_host_address(popsgx_page_handler *pgHandler, long int remote_address){
+    return __popsgx_translate_address(pgHandler->host_tracee_start_address, pgHandler->remote_tracee_start_address, remote_address);
+}
+
+long int popsgx_remote_to_monitor_address(popsgx_page_handler *pgHandler, long int remote_address){
+    return __popsgx_translate_address(pgHandler->monitor_start_address, pgHandler->remote_tracee_start_address,remote_address);
+}
+
+long int popsgx_host_to_monitor_address(popsgx_page_handler *pgHandler, long int host_address){
+    return __popsgx_translate_address(pgHandler->monitor_start_address, pgHandler->host_tracee_start_address, host_address);
+} 
+
+long int popsgx_monitor_to_host_address(popsgx_page_handler *pgHandler, long int monitor_address){
+    return __popsgx_translate_address(pgHandler->host_tracee_start_address, pgHandler->monitor_start_address, monitor_address);
+}
+
+long int popsgx_monitor_to_remote_address(popsgx_page_handler *pgHandler, long int monitor_address){
+    return __popsgx_translate_address(pgHandler->remote_tracee_start_address, pgHandler->monitor_start_address, monitor_address);
 }

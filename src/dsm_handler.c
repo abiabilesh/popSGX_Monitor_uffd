@@ -208,6 +208,8 @@ void dsm_handler_destroy(dsm_handler *dsm){
 int dsm_establish_communication(dsm_handler *dsm, long int *pg_address, int *no_pgs){
     int ret = 0;
     struct msi_message msg;
+    long int host_pg_address = *pg_address;
+    int host_no_pgs = *no_pgs;
 
     ret =  __connect_as_client(dsm->remote, &dsm->socket_fd);
     if(ret){
@@ -232,6 +234,26 @@ int dsm_establish_communication(dsm_handler *dsm, long int *pg_address, int *no_
 
         log_info("Sent the shared memory address information to client");
 
+        nret = read(dsm->socket_fd, &msg, sizeof(msg));
+        if(nret < 0){
+            ret = nret;
+            log_error("Couldn't receieve message from the server side");
+            goto dsm_establish_communication_fail;
+        }
+
+        if(msg.message_type == CONNECTION_ESTABLISHED){
+            log_info("Pairing Request Received: Addr: 0x%lx, Length: %lu",                  \
+		                                            msg.payload.memory_pair.address,        \
+		                                            msg.payload.memory_pair.size);
+        }else{
+            log_error("Received a wrong message %d from the client", msg.message_type);
+            ret = -1;
+            goto dsm_establish_communication_fail;
+        }
+
+        *pg_address = msg.payload.memory_pair.address;
+        *no_pgs = msg.payload.memory_pair.size;
+
     }else{
         dsm->mode = CLIENT_MODE;
         int nret;
@@ -254,6 +276,18 @@ int dsm_establish_communication(dsm_handler *dsm, long int *pg_address, int *no_
 
         *pg_address = msg.payload.memory_pair.address;
         *no_pgs = msg.payload.memory_pair.size;
+
+        msg.message_type = CONNECTION_ESTABLISHED;
+        msg.payload.memory_pair.address = (uint64_t) host_pg_address;
+        msg.payload.memory_pair.size = host_no_pgs;
+        nret = write(dsm->socket_fd, &msg, sizeof(msg));
+        if(nret <= 0){
+            ret = nret;
+            log_error("Couldn't send message to the server side");
+        }
+
+        log_info("Sent the shared memory address information to server");
+
     }
 
 dsm_establish_communication_fail:

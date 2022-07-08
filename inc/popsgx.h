@@ -22,6 +22,7 @@ typedef struct popsgx_app_t{
     popsgx_page_handler pgHandler;  
     dsm_handler dsmHandler;
     msi_handler msiHandler;
+    pthread_t userfaultfd_thread;
 } popsgx_app;
 
 #endif

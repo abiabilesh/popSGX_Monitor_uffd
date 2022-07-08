@@ -160,9 +160,9 @@ void msi_handle_write_command(msi_handler *msi, int sk, void *addr, void *data, 
         goto msi_handle_write_fail;
     }
 
-    int vdata = *(int*)(data+0xf);
+    //int vdata = *(int*)(data+0xf);
     if(page_to_transition){
-        log_debug("Copying %c to address %p", vdata, page_to_transition->trace_physical_address);
+        //log_debug("Copying %c to address %p", vdata, page_to_transition->trace_physical_address);
         memcpy(page_to_transition->trace_physical_address, data, data_size);
         ret = popsgx_set_page_tag(msi->pgHdl, page_to_transition, INVALID);
         if(ret){

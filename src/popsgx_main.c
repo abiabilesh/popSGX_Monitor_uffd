@@ -15,7 +15,7 @@
 extern char* __progname;
 
 // Required number of arguments for the application
-#define OPT_MANDATORY_COUNT 6
+#define OPT_MANDATORY_COUNT 4
 
 // Static function declaration
 static void usage(void);
@@ -66,16 +66,24 @@ static int popsgx_setup_memory(popsgx_app* popsgx, long int address, int no_page
     int ret = 0;
     dsm_handler *dsm = &popsgx->dsmHandler;
     popsgx_page_handler *pgHdl = &popsgx->pgHandler;
+    long int remote_address = address;
+    int remote_pages = no_pages;
 
-    ret = dsm_establish_communication(dsm, &address, &no_pages);
+    // The client will receive the server's stack address and pages here
+    ret = dsm_establish_communication(dsm, &remote_address, &remote_pages);
     if(ret){
         log_error("dsm_establish_communication failed");
         goto popsgx_dsm_comm_fail;
     }
+    
+    if(remote_pages != no_pages){
+        log_error("The remote side page size and host side page size do not match");
+        goto popsgx_setup_memory_fail;
+    }
 
     ret = popsgx_pgHandler_init(pgHdl, no_pages);
     if(!ret){
-        ret = pgHandler_setup_memory(pgHdl, address);
+        ret = pgHandler_setup_memory(pgHdl, address, remote_address);
         if(ret){
             log_error("pgHandler setup memory failed");
             goto popsgx_setup_memory_fail;
@@ -115,6 +123,50 @@ popsgx_start_fail:
     return ret;
 }
 
+static int get_stack_frame(pid_t tracee_pid, unsigned long *stack_start_address){
+    int ret = 0;
+    char *sret;
+    FILE *fp;
+    char file_name[50];
+    char line[128];
+    unsigned long stack_end_address;
+
+    ret = snprintf(file_name, 50, "/proc/%d/maps", tracee_pid);
+    if(ret < 0){
+        log_error("failed in finding the maps file for the process %d", tracee_pid);
+        goto get_stack_frame_fail;
+    }
+
+    fp = fopen(file_name, "r");
+    if(!fp)
+        goto get_stack_frame_fail;
+    
+    while(fgets(line, sizeof(line), fp)){
+        sret = strstr(line, "[stack]");
+        if(sret){
+            char *ptr;
+            *stack_start_address = strtoul(line, &ptr, 16);            
+            stack_end_address = strtoul(ptr+1, NULL, 16);
+
+            log_debug("The starting address of the pid %d stack : %lx", tracee_pid, *stack_start_address);
+            log_debug("The ending address of the pid %d stack : %lx", tracee_pid, stack_end_address);
+
+            ret = stack_end_address - *stack_start_address;
+            break;
+        }
+    }
+
+    if(!sret){
+        log_debug("Could not find the stack frame in the tracee proc map");
+        ret = -1;
+    }
+    
+    fclose(fp);
+
+get_stack_frame_fail:
+    return ret;
+}
+
 int main(int argc, char* argv[]){
     
     int ret = 0;
@@ -122,7 +174,7 @@ int main(int argc, char* argv[]){
     char *remote_ip = NULL;
     int remote_port = -1;
     int host_port = -1;
-    long int shared_physical_address = -1;
+    unsigned long shared_physical_address = -1;
     int no_of_shared_pages = -1;
     popsgx_app *popsgx = NULL;
 
@@ -167,7 +219,7 @@ int main(int argc, char* argv[]){
             break;
         
         case 'm':
-            shared_physical_address = strtol(optarg, NULL, 16);
+            shared_physical_address = strtoul(optarg, NULL, 16);
             break;
         
         case 'n':
@@ -190,6 +242,18 @@ int main(int argc, char* argv[]){
     if(ret){
         log_error("Could not execute the tracee for popsgx");
         goto popsgx_fail;
+    }
+
+    if(shared_physical_address == -1){
+        ret = get_stack_frame(popsgx->child.c_pid, &shared_physical_address);
+        if(ret < 0){
+            log_error("get_stack_frame failed");
+            goto popsgx_fail;
+        }
+
+        if(no_of_shared_pages == -1){
+            no_of_shared_pages = ret / PAGE_SIZE;
+        }
     }
 
     ret = compel_handler_init(&popsgx->cmplHandler);
@@ -237,8 +301,7 @@ int main(int argc, char* argv[]){
         goto msi_handler_fail;
     }
 
-    pthread_t userfaultfd_thread;
-    setup_userfaultfd_region(&popsgx->msiHandler ,&userfaultfd_thread,
+    setup_userfaultfd_region(&popsgx->msiHandler ,&popsgx->userfaultfd_thread,
 					&fault_handler_thread, popsgx->dsmHandler.socket_fd, compelArgs.cmd_args.fdArgs.tracee_fd, popsgx->child.c_pid);
 
     while(1);
