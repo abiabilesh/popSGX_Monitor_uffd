@@ -2,8 +2,8 @@
 #include <stdlib.h> 
 #include <unistd.h>
 
-#include "../inc/compel_handler.h"
 #include "../inc/log.h"
+#include "../inc/compel_handler.h"
 
 /* --------------------------------------------------------------------
  * Defines
@@ -11,35 +11,45 @@
 #define COMPEL_LOG_LEVEL COMPEL_LOG_ERROR
 
 /* --------------------------------------------------------------------
- * Local Functions declarations
+ * Local Functions declaration
  * -------------------------------------------------------------------*/
-static int __compel_stealFd(infect_handler *infectHdl, int cmd, int *traceeFd);
-static int __compel_tracee_stealFd(infect_handler *infectHdl, stealFd_args *args);
-
-static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid);
-static int __compel_disinfection(infect_handler *infectHdl);
-
+static int __compel_prepare_infection(compel_handler *cmpl_hdl, pid_t pid);
+static int __compel_disinfection(compel_handler *cmpl_hdl);
+static int __compel_steal_fd(compel_handler *cmpl_hdl, int cmd, int *traceeFd);
+static int _compel_steal_fd(popsgx_child *tracee, compel_fd fd_type, int *fd,  void* addr, int no_pages);
 
 /* --------------------------------------------------------------------
- * Local Functions
+ * Local Functions definitions
  * -------------------------------------------------------------------*/
+
+/**
+ * @brief a function which will be called from compel
+ * 
+ * @param lvl 
+ * @param fmt 
+ * @param parms 
+ */
 static void print_vmsg(unsigned int lvl, const char *fmt, va_list parms)
 {
 	log_debug("\tLC%u: ", lvl);
 	vprintf(fmt, parms);
 }
 
-/* --------------------------------------------------------------------
- * Functions executed with locks
- * -------------------------------------------------------------------*/
-
-static int __compel_stealFd(infect_handler *infectHdl, int cmd, int *traceeFd){
+/**
+ * @brief Local function for stealing the descriptor
+ * 
+ * @param cmpl_hdl 
+ * @param cmd 
+ * @param traceeFd 
+ * @return int 
+ */
+static int __compel_steal_fd(compel_handler *cmpl_hdl, int cmd, int *traceeFd){
     int ret  = 0;
 
-    log_debug("Stealing the %d fd from the victim pid %d", cmd, infectHdl->pid);
-    if(!compel_rpc_call(cmd, infectHdl->ctl)){
-        if(!compel_util_recv_fd(infectHdl->ctl, traceeFd)){
-            if(compel_rpc_sync(cmd, infectHdl->ctl)){
+    log_debug("Stealing the %d fd from the victim pid %d", cmd, cmpl_hdl->pid);
+    if(!compel_rpc_call(cmd, cmpl_hdl->ctl)){
+        if(!compel_util_recv_fd(cmpl_hdl->ctl, traceeFd)){
+            if(compel_rpc_sync(cmd, cmpl_hdl->ctl)){
                 log_error("Couldn't finalize the command %d", cmd);
                 goto fail_compel_stealFd;
             }
@@ -58,69 +68,26 @@ fail_compel_stealFd:
     return -1;
 }
 
-static int __compel_tracee_stealFd(infect_handler *infectHdl, stealFd_args *args){
-    int ret = 0;
-    uint64_t *compel_arg;
-    
-    if(args->fd_type == PARASITE_CMD_GET_STDUFLT_FD){
-        //Preparing arguments for the compel only for the case of UFFD
-        compel_arg = compel_parasite_args(infectHdl->ctl,                                                                   \
-                                  sizeof(args->shared_page_address) + sizeof(args->no_of_pages));
-        compel_arg[0] = args->shared_page_address;
-        compel_arg[1] = args->no_of_pages;
-    }
-
-    ret = __compel_stealFd(infectHdl, args->fd_type, &args->tracee_fd);
-    if(ret){
-        args->tracee_fd = -1;
-        log_error("Stealing the fd from tracee failed");
-        goto compel_stealFd_fail;
-    }
-
-compel_stealFd_fail:
-    return ret;
-}
-
-
-static int __compel_tracee_madvise(infect_handler *infectHdl, madvise_args *args){
-    int ret = 0;
-    uint64_t *compel_arg;
-    int cmd = PARASITE_CMD_SET_MADVISE_NO_NEED;
-
-    compel_arg = compel_parasite_args(infectHdl->ctl, uint64_t);
-    *compel_arg = args->page_address;
-
-    log_debug("madvising the victim pid %d address %p with the command %d",                                                 \
-                                        infectHdl->pid, args->page_address, cmd);
-    
-    if(ret = compel_rpc_call_sync(cmd, infectHdl->ctl)){
-        log_error("compel_rpc_call_sync failed");
-        goto fail_compel_victim_madvise;
-    }
-
-    if(ret = compel_rpc_call_sync(cmd, infectHdl->ctl)){
-        log_error("compel_rpc_call_sync failed");
-        goto fail_compel_victim_madvise;
-    }
-
-fail_compel_victim_madvise:
-    return ret;
-}
-
-
-static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid){
+/**
+ * @brief Preparing the compel for infection
+ * 
+ * @param cmpl_hdl Handle for the compel
+ * @param pid       Process id for which to execute the compel
+ * @return int      error
+ */
+static int __compel_prepare_infection(compel_handler *cmpl_hdl, pid_t pid){
     int ret = 0;
     int state;
     struct parasite_ctl *ctl;
     struct infect_ctx *ictx;  
 
-    if(infectHdl == NULL){
+    if(cmpl_hdl == NULL){
         log_error("Infect Handle is NULL");
         return -1;
     }
 
-    memset(infectHdl, 0, sizeof(infect_handler));
-    infectHdl->pid = pid;
+    memset(cmpl_hdl, 0, sizeof(compel_handler));
+    cmpl_hdl->pid = pid;
     
     log_info("Stoping the tracee for compel code injection");
     state = compel_stop_task(pid);
@@ -128,7 +95,7 @@ static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid){
         log_error("Could not stop the victim for compel infection");
         return state;
     }
-    infectHdl->state = state;
+    cmpl_hdl->state = state;
 
     log_debug("Preparing compel's parasitic context");
     ctl = compel_prepare(pid);
@@ -136,7 +103,7 @@ static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid){
         log_error("Could not create compel context");
         goto fail_compel_create_context;
     }
-    infectHdl->ctl = ctl;
+    cmpl_hdl->ctl = ctl;
 
     /*
      * First -- the infection context. Most of the stuff
@@ -144,14 +111,14 @@ static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid){
      * log descriptor for parasite side, library cannot
      * live w/o it.
      */
-    ictx = compel_infect_ctx(infectHdl->ctl);
+    ictx = compel_infect_ctx(cmpl_hdl->ctl);
     ictx->log_fd = STDERR_FILENO;
 
     log_debug("Preparing the parasite code header for injection");
-    parasite_setup_c_header(infectHdl->ctl);
+    parasite_setup_c_header(cmpl_hdl->ctl);
 
     log_debug("Infecting the tracee through code injection");
-    if(compel_infect(infectHdl->ctl, 1, sizeof(int))){
+    if(compel_infect(cmpl_hdl->ctl, 1, sizeof(int))){
         log_error("Could not infect the tracee");
         goto fail_compel_prepare_infection;
     }
@@ -160,21 +127,26 @@ static int __compel_prepare_infection(infect_handler *infectHdl, pid_t pid){
 
 fail_compel_prepare_infection:
     log_info("Curing the victim");
-    compel_cure(infectHdl->ctl);
+    compel_cure(cmpl_hdl->ctl);
 fail_compel_create_context:
     log_info("Resuming the tracee");
-    compel_resume_task(pid, infectHdl->state,infectHdl->state);
-    infectHdl->state = -1;
+    compel_resume_task(pid, cmpl_hdl->state,cmpl_hdl->state);
+    cmpl_hdl->state = -1;
     return -1;
 }
 
-
-static int __compel_disinfection(infect_handler *infectHdl){
+/**
+ * @brief Disinfects the tracee post infection
+ * 
+ * @param cmpl_hdl 
+ * @return int 
+ */
+static int __compel_disinfection(compel_handler *cmpl_hdl){
     int ret = 0;
     struct infect_ctx *ictx;
 
     log_debug("Curing the victim");
-    if(compel_cure(infectHdl->ctl)){
+    if(compel_cure(cmpl_hdl->ctl)){
         ret = -1;
         log_error("Could not cure the victim");
     }
@@ -183,93 +155,101 @@ static int __compel_disinfection(infect_handler *infectHdl){
      *socket has to be closed in order for the consecutive
      *compel calls to work like compel_victim_madvise after compel_victim_stealFd
      */
-    ictx = compel_infect_ctx(infectHdl->ctl);
+    ictx = compel_infect_ctx(cmpl_hdl->ctl);
     close(ictx->sock);
 
     log_debug("Resuming the victim for normal execution");
-    if(compel_resume_task(infectHdl->pid, infectHdl->state, infectHdl->state)){
+    if(compel_resume_task(cmpl_hdl->pid, cmpl_hdl->state, cmpl_hdl->state)){
         ret = -1;
         log_error("Could not unseize the victim task");
     }
 
-    memset(infectHdl, 0, sizeof(infect_handler));
+    memset(cmpl_hdl, 0, sizeof(compel_handler));
 
     return ret;
+}
+
+/**
+ * @brief function for stealing fd from the tracee
+ * @param tracee popsgx_child structure of the tracee
+ * @param fd_type type of the fd to steal
+ * @param fd the stolen fd
+ * @return error 
+ */
+static int _compel_steal_fd(popsgx_child *tracee, compel_fd fd_type, int *fd,  void* addr, int no_pages){
+    int rc = 0;
+    compel_handler cmpl_hdl;
+    uint64_t *compel_arg;
+
+    //compel_log_init(print_vmsg, COMPEL_LOG_LEVEL);
+    if(tracee == NULL){
+        log_debug("The tracee handle given is NULL");
+        rc = -1;
+        goto out_fail;
+    }
+
+    pthread_mutex_lock(&tracee->mutex);
+
+    rc = __compel_prepare_infection(&cmpl_hdl, tracee->c_pid);
+    if(rc){
+        log_error("Could not prepare infection on tracee");
+        goto out_infection_fail;
+    }
+
+    if(fd_type == PARASITE_STDUFLT_FD){
+        compel_arg = compel_parasite_args(cmpl_hdl.ctl,                                                              \
+                                  sizeof((uint64_t)addr) + sizeof(no_pages));
+        compel_arg[0] = (uint64_t)addr;
+        compel_arg[1] = no_pages;
+    }
+
+    rc = __compel_steal_fd(&cmpl_hdl, fd_type, fd);
+    if(rc){
+        *fd = -1;
+        log_error("Could not steal fd");
+    }
+
+    rc = __compel_disinfection(&cmpl_hdl);
+    if(rc){
+        log_error("Could not disinfect tracee");
+    }
+
+out_infection_fail:
+    pthread_mutex_unlock(&tracee->mutex);
+out_fail:
+    return rc;
 }
 
 /* --------------------------------------------------------------------
- * Public Functions
+ * Public Functions definitions
  * -------------------------------------------------------------------*/
 /**
- * @brief It just initializes the compel handler
- * @param void 
+ * @brief Steal uffd from the tracee process
+ * 
+ * @param tracee 
+ * @param fd 
+ * @param addr 
+ * @param no_pages 
  * @return int 
  */
-int compel_handler_init(compel_handler *cmpHdl){
-    int ret = 0;
-  
-    if(pthread_mutex_init(&cmpHdl->compel_mutex, NULL) != 0){
-        log_error("Couldn't setup compel mutex lock");
-        ret = -1;
-        goto compel_mutex_failed;
-    }
-    compel_log_init(print_vmsg, COMPEL_LOG_LEVEL);
-    cmpHdl->isInitialized = true;
-
-    return ret;
-
-compel_mutex_failed:
-    return ret;
+int compel_steal_uffd(popsgx_child *tracee, int *fd, void* addr, int no_pages){
+   return _compel_steal_fd(tracee, PARASITE_STDUFLT_FD, fd, addr, no_pages);
 }
 
-
-int compel_ioctl(compel_handler *compelHandle, compel_ioctl_arg *args){
-    int ret = 0, sret = 0;
-
-    if(compelHandle == NULL){
-        log_error("compel handle is NULL");
-        goto compel_ioctl_failed;
-    }
-
-    if(!compelHandle->isInitialized){
-        ret = compel_handler_init(compelHandle);
-        if(ret)
-            goto compel_ioctl_failed;
-    }
-
-    pthread_mutex_lock(&compelHandle->compel_mutex);
+/**
+ * @brief Steal fd of any kind except uffd
+ * 
+ * @param tracee 
+ * @param fd_type 
+ * @param fd 
+ * @return int 
+ */
+int compel_steal_fd(popsgx_child *tracee, compel_fd fd_type, int *fd){
     
-    //Execution in mutex 
-    ret = __compel_prepare_infection(&compelHandle->infectHdl, args->tracee_pid);
-    if(ret){
-        log_error("Compel infection of tracee failed");
-        goto compel_ioctl_failed;
+    if(fd_type == PARASITE_STDUFLT_FD){
+        log_error("Could not steal uffd");
+        return -1;
     }
 
-    switch (args->cmd)
-    {
-    
-    case STEALFD:
-        sret = __compel_tracee_stealFd(&compelHandle->infectHdl, &(args->cmd_args.fdArgs));
-        break;
-    
-    case MADVISE:
-        sret = __compel_tracee_madvise(&compelHandle->infectHdl, &(args->cmd_args.madvArgs));
-        break;
-
-    default:
-        log_error("compel_ioctl command is wrong!!");
-        break;
-    }
-
-    ret = __compel_disinfection(&compelHandle->infectHdl);
-    if(ret){
-        log_error("Compel disinfection failed");
-        goto compel_ioctl_failed;
-    }
-
-
-compel_ioctl_failed:
-    pthread_mutex_unlock(&compelHandle->compel_mutex);
-    return ret = ((sret != 0) || (ret != 0)) ? 1 : 0;
+    return _compel_steal_fd(tracee, fd_type, fd, -1, -1);
 }

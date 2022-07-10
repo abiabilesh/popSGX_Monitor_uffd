@@ -62,12 +62,10 @@ static int send_uffd(uint64_t desired_addr, uint16_t no_of_pages){
 	    return -1;
     }
     
-//     addr = sys_mmap(desired_addr, memorySize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
-//     if(addr == MAP_FAILED){
-//             return -1;
-//     }
-
-    addr = desired_addr;
+    addr = sys_mmap(desired_addr, memorySize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
+    if(addr == MAP_FAILED){
+            return -1;
+    }
 
     ufFd_register.range.start = (unsigned long long)addr;
     ufFd_register.range.len   = memorySize;

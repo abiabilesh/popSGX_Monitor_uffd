@@ -7,6 +7,7 @@
 #include <pthread.h>
 
 #include "parasite.h"
+#include "../inc/popsgx_monitor.h"
 
 /* --------------------------------------------------------------------
  * MACROS
@@ -20,51 +21,24 @@
 /* --------------------------------------------------------------------
  * Structures & Required Datatypes
  * -------------------------------------------------------------------*/
-typedef struct infect_handler_t{
-   struct parasite_ctl *ctl;
-   int state;
-   pid_t pid;
-}infect_handler;
+typedef enum compel_fd_t{
+    PARASITE_STDIN_FD = PARASITE_CMD_GET_STDIN_FD,
+    PARASITE_STDOUT_FD,
+    PARASITE_STDERR_FD,
+    PARASITE_STDUFLT_FD
+}compel_fd;
 
 typedef struct compel_handler_t{
-   pthread_mutex_t compel_mutex;
-   bool isInitialized;
-   infect_handler infectHdl;
-} compel_handler;
-
-
-// Structures belonging to the arguments of compel handler
-typedef enum{
-   STEALFD,
-   MADVISE
-}compel_cmd;
-
-typedef struct stealFd_args_t{
-   int      fd_type;
-   uint64_t shared_page_address;
-   uint64_t no_of_pages;
-   int      tracee_fd;
-}stealFd_args;
-
-typedef struct madvise_args_t{
-      uint64_t page_address;
-}madvise_args;
-
-typedef union compel_args_t{
-   stealFd_args fdArgs;
-   madvise_args madvArgs;
-}compel_args;
-
-typedef struct compel_ioctl_arg{
-   pid_t       tracee_pid;
-   compel_cmd  cmd;
-   compel_args cmd_args;
-}compel_ioctl_arg;
+    struct parasite_ctl *ctl;
+    int state;
+    pid_t pid;
+}compel_handler;
 
 /* --------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------*/
-int compel_handler_init(compel_handler *cmpHdl);
-int compel_ioctl(compel_handler *compelHandle, compel_ioctl_arg *args);
+int compel_steal_fd(popsgx_child *tracee, compel_fd fd_type, int *fd);
+int compel_steal_uffd(popsgx_child *tracee, int *fd, void* addr, int no_pages);
+int compel_do_madvise(popsgx_child *process, void *addr);
 
 #endif
