@@ -6,9 +6,13 @@
 #include <errno.h>
 #include <sys/types.h>
 
+#include <sys/mman.h>
+
 #include "../inc/log.h"
 #include "../inc/popsgx_monitor.h"
 #include "../inc/compel_handler.h"
+#include "../inc/dsm_handler.h"
+#include "../inc/uffd_handler.h"
 
 extern char* __progname;
 
@@ -83,10 +87,7 @@ static int execute_tracee_app(popsgx_child *tracee){
 int main(int argc, char* argv[]){
     int rc = 0;
     int opt, opt_counter = 0;
-    char *remote_ip = NULL;
     char *mode = NULL;
-    int remote_port = -1;
-    int host_port = -1;
     unsigned long shared_physical_address = -1;
     int no_of_shared_pages = -1;
     popsgx_app monitor_app;
@@ -113,19 +114,19 @@ int main(int argc, char* argv[]){
         switch (opt)
         {
         case 'v':
-            monitor_app.child.c_path = strdup(optarg);
+            monitor_app.dsm.child.c_path = strdup(optarg);
             break;
         
         case 'r':
-            remote_ip = strdup(optarg);
+            monitor_app.dsm.remote_ip = strdup(optarg);
             break;
 
         case 'p':
-            remote_port = atoi(optarg);
+            monitor_app.dsm.remote_port = atoi(optarg);
             break;
 
         case 't':
-            host_port = atoi(optarg);
+            monitor_app.dsm.host_port = atoi(optarg);
             break;
         
         case 's':
@@ -159,25 +160,55 @@ int main(int argc, char* argv[]){
 		usage();
 	}
 
-    rc = execute_tracee_app(&monitor_app.child);
+    rc = execute_tracee_app(&monitor_app.dsm.child);
     if(rc){
         log_error("failed to execute the tracee app");
         goto out_fail; 
     }
 
-    rc = compel_steal_uffd(&monitor_app.child,          \
-                           &monitor_app.child.uffd,     \
-                           shared_physical_address,     \
+    rc = compel_steal_uffd(&monitor_app.dsm.child,          \
+                           &monitor_app.dsm.child.uffd,     \
+                           shared_physical_address,         \
                            no_of_shared_pages);
     if(rc){
         log_error("failed to steal uffd");
         goto out_fail;
     }
+    log_debug("the stolen uffd is %d", monitor_app.dsm.child.uffd);
 
-    log_debug("the stolen uffd is %d", monitor_app.child.uffd);
+    mmap(shared_physical_address, no_of_shared_pages * 4096,
+		     PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS |
+		     MAP_FIXED, -1, 0);
+	memset(shared_physical_address, 0, no_of_shared_pages * 4096);
+    rc = create_msi_pages(&monitor_app.dsm.msi, shared_physical_address, no_of_shared_pages);
+    if(rc){
+        log_error("Couldn't create msi pages");
+        goto out_msi_fail;
+    }
+
+    rc = dsm_main(&monitor_app.dsm, monitor_app.mode);
+    if(rc){
+        log_error("failed to start dsm");
+        goto out_dsm_fail;
+    }
+
+    monitor_app.uffd_hdl.args.child = &monitor_app.dsm.child;
+    monitor_app.uffd_hdl.args.msi = &monitor_app.dsm.msi;
+    monitor_app.uffd_hdl.args.sock_fd = monitor_app.dsm.socket_fd;
+    rc = start_uffd_thread_handler(&monitor_app.uffd_hdl);
+    if(rc){
+        log_error("failed to start uffd thread");
+        goto out_uffd_thread_fail;
+    }
 
     while(1);
-
+ 
+out_uffd_thread_fail:
+    //Implement stopping the dsm & its threads
+out_msi_fail:
+    //Implement killing the tracee process
+out_dsm_fail:
+    //Delete the msi pages
 out_fail:
     return rc;
 }
