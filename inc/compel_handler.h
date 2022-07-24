@@ -1,35 +1,44 @@
-#ifndef _COMPEL_HANDLER_H
-#define _COMPEL_HANDLER_H
+#ifndef __COMPEL_HANDLER_H__
+#define __COMPEL_HANDLER_H__
 
 #include <compel/log.h>
 #include <compel/infect-rpc.h>
 #include <compel/infect-util.h>
+#include <pthread.h>
 
 #include "parasite.h"
+#include "../inc/popsgx_monitor.h"
 
+/* --------------------------------------------------------------------
+ * MACROS
+ * -------------------------------------------------------------------*/
 #define PARASITE_CMD_GET_STDIN_FD         PARASITE_USER_CMDS
 #define PARASITE_CMD_GET_STDOUT_FD        PARASITE_USER_CMDS + 1
 #define PARASITE_CMD_GET_STDERR_FD        PARASITE_USER_CMDS + 2
 #define PARASITE_CMD_GET_STDUFLT_FD       PARASITE_USER_CMDS + 3
 #define PARASITE_CMD_SET_MADVISE_NO_NEED  PARASITE_USER_CMDS + 4
 
-typedef struct compel_handle
-{
-    struct infect_ctx *ctl;
-    int status;
-    pid_t victim_pid;
-    bool is_intialized;
-}compel_handle;
+/* --------------------------------------------------------------------
+ * Structures & Required Datatypes
+ * -------------------------------------------------------------------*/
+typedef enum compel_fd_t{
+    PARASITE_STDIN_FD = PARASITE_CMD_GET_STDIN_FD,
+    PARASITE_STDOUT_FD,
+    PARASITE_STDERR_FD,
+    PARASITE_STDUFLT_FD
+}compel_fd;
 
-//Compel Intializer
-static int compel_setup(pid_t pid);
-//Compel Destructor
-static int compel_destruct(void);
-//Compel functionalities
-static int compel_stealFd(int cmd, int *stolen_fd);
+typedef struct compel_handler_t{
+    struct parasite_ctl *ctl;
+    int state;
+    pid_t pid;
+}compel_handler;
 
-//User functionalities
-int compel_victim_stealFd(pid_t victim_pid, int cmd, int *fd, uint64_t shared_addr, uint64_t no_of_pages);
-int compel_victim_madvise(pid_t victim_pid, int cmd, uint64_t page_addr);
+/* --------------------------------------------------------------------
+ * Public Functions
+ * -------------------------------------------------------------------*/
+int compel_steal_fd(popsgx_child *tracee, compel_fd fd_type, int *fd);
+int compel_steal_uffd(popsgx_child *tracee, int *fd, void* addr, int no_pages);
+int compel_do_madvise(popsgx_child *process, void *addr);
 
 #endif

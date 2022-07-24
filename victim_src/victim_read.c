@@ -17,9 +17,7 @@ int main(int argc, char **argv)
 	int i = 0;// aux;
 //        signal(SIGINT,sig_handler);
 	sleep(5);
-	sleep(5);
-	sleep(5);
-	sleep(5);
+//	while(1);
 	hello += 0xf;
 	do {
                 printf("Victim about to read a new page @ %p!!!!!!!!!!!!!!\n", hello);
